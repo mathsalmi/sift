@@ -1,0 +1,520 @@
+{
+  "name": "sift",
+  "displayName": "Sift",
+  "description": "Sift a large AI-made change set into reviewed, atomic commits, with Claude in the review loop.",
+  "publisher": "msalmi",
+  "version": "0.3.0",
+  "private": true,
+  "license": "UNLICENSED",
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "SCM Providers",
+    "Other"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "workspaceContains:.git"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "sift",
+          "title": "Sift",
+          "icon": "resources/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "sift": [
+        {
+          "id": "sift.plan",
+          "name": "Plan"
+        },
+        {
+          "id": "sift.board",
+          "name": "Board"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "sift.plan",
+        "contents": "No review session in this repository.\n[Start review](command:sift.start)\nStarts a session from your uncommitted changes. Then load a plan (.sift/plan.json) or create commits by hand.",
+        "when": "!sift.active"
+      }
+    ],
+    "commands": [
+      {
+        "command": "sift.start",
+        "title": "Start review",
+        "category": "Sift",
+        "icon": "$(play)"
+      },
+      {
+        "command": "sift.refresh",
+        "title": "Refresh changes",
+        "category": "Sift",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "sift.loadPlan",
+        "title": "Load plan from .sift/plan.json",
+        "category": "Sift",
+        "icon": "$(list-ordered)"
+      },
+      {
+        "command": "sift.newCommit",
+        "title": "New commit",
+        "category": "Sift",
+        "icon": "$(add)"
+      },
+      {
+        "command": "sift.renameCommit",
+        "title": "Edit commit message",
+        "category": "Sift"
+      },
+      {
+        "command": "sift.deleteCommit",
+        "title": "Delete commit (files become unassigned)",
+        "category": "Sift"
+      },
+      {
+        "command": "sift.moveCommitUp",
+        "title": "Move commit up",
+        "category": "Sift",
+        "icon": "$(arrow-up)"
+      },
+      {
+        "command": "sift.moveCommitDown",
+        "title": "Move commit down",
+        "category": "Sift",
+        "icon": "$(arrow-down)"
+      },
+      {
+        "command": "sift.startCommit",
+        "title": "Start reviewing this commit",
+        "category": "Sift",
+        "icon": "$(debug-start)"
+      },
+      {
+        "command": "sift.openDiff",
+        "title": "Open diff",
+        "category": "Sift"
+      },
+      {
+        "command": "sift.toggleDiffMode",
+        "title": "Toggle diff mode (this round / cumulative)",
+        "category": "Sift",
+        "icon": "$(diff)"
+      },
+      {
+        "command": "sift.compareVersions",
+        "title": "Compare versions\u2026",
+        "category": "Sift",
+        "icon": "$(versions)"
+      },
+      {
+        "command": "sift.takeSnapshot",
+        "title": "Take snapshot (new round)",
+        "category": "Sift",
+        "icon": "$(device-camera)"
+      },
+      {
+        "command": "sift.markDone",
+        "title": "Mark reviewed (done)",
+        "category": "Sift",
+        "icon": "$(pass)"
+      },
+      {
+        "command": "sift.markInProgress",
+        "title": "Mark in progress",
+        "category": "Sift"
+      },
+      {
+        "command": "sift.markTodo",
+        "title": "Mark to do",
+        "category": "Sift"
+      },
+      {
+        "command": "sift.nextTodo",
+        "title": "Next to do",
+        "category": "Sift",
+        "icon": "$(arrow-right)"
+      },
+      {
+        "command": "sift.moveToCommit",
+        "title": "Move to commit\u2026",
+        "category": "Sift"
+      },
+      {
+        "command": "sift.approveCommit",
+        "title": "Approve and commit",
+        "category": "Sift",
+        "icon": "$(git-commit)"
+      },
+      {
+        "command": "sift.toggleBoardScope",
+        "title": "Board: toggle current commit / all commits",
+        "category": "Sift",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "sift.abort",
+        "title": "Abort session (keeps your files)",
+        "category": "Sift"
+      },
+      {
+        "command": "sift.sendToClaude",
+        "title": "Send to Claude",
+        "category": "Sift",
+        "icon": "$(send)"
+      },
+      {
+        "command": "sift.toggleExplanations",
+        "title": "Show / hide Claude's explanations",
+        "category": "Sift",
+        "icon": "$(lightbulb)"
+      },
+      {
+        "command": "sift.copyPrompt",
+        "title": "Copy prompt for Claude",
+        "category": "Sift"
+      },
+      {
+        "command": "sift.setupClaude",
+        "title": "Set up Claude Code (MCP)",
+        "category": "Sift",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "sift.installSlashCommand",
+        "title": "Install /sift command for Claude Code",
+        "category": "Sift"
+      },
+      {
+        "command": "sift.comment.create",
+        "title": "Add comment",
+        "category": "Sift"
+      },
+      {
+        "command": "sift.comment.reply",
+        "title": "Reply",
+        "category": "Sift"
+      },
+      {
+        "command": "sift.comment.resolve",
+        "title": "Resolve",
+        "category": "Sift",
+        "icon": "$(check)"
+      },
+      {
+        "command": "sift.comment.reopen",
+        "title": "Reopen",
+        "category": "Sift",
+        "icon": "$(issue-reopened)"
+      },
+      {
+        "command": "sift.comment.delete",
+        "title": "Delete thread",
+        "category": "Sift",
+        "icon": "$(trash)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "sift.start",
+          "when": "view == sift.plan && !sift.active",
+          "group": "navigation@1"
+        },
+        {
+          "command": "sift.loadPlan",
+          "when": "view == sift.plan && sift.active",
+          "group": "navigation@1"
+        },
+        {
+          "command": "sift.newCommit",
+          "when": "view == sift.plan && sift.active",
+          "group": "navigation@2"
+        },
+        {
+          "command": "sift.takeSnapshot",
+          "when": "view == sift.plan && sift.active",
+          "group": "navigation@3"
+        },
+        {
+          "command": "sift.approveCommit",
+          "when": "view == sift.plan && sift.active",
+          "group": "navigation@4"
+        },
+        {
+          "command": "sift.refresh",
+          "when": "view == sift.plan && sift.active",
+          "group": "navigation@5"
+        },
+        {
+          "command": "sift.abort",
+          "when": "view == sift.plan && sift.active",
+          "group": "z@1"
+        },
+        {
+          "command": "sift.toggleBoardScope",
+          "when": "view == sift.board && sift.active",
+          "group": "navigation@1"
+        },
+        {
+          "command": "sift.sendToClaude",
+          "when": "view == sift.plan && sift.active",
+          "group": "navigation@0"
+        },
+        {
+          "command": "sift.toggleExplanations",
+          "when": "view == sift.plan && sift.active",
+          "group": "navigation@6"
+        },
+        {
+          "command": "sift.setupClaude",
+          "when": "view == sift.plan",
+          "group": "z@0"
+        },
+        {
+          "command": "sift.copyPrompt",
+          "when": "view == sift.plan && sift.active",
+          "group": "z@2"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "sift.startCommit",
+          "when": "view == sift.plan && viewItem == commit",
+          "group": "inline@1"
+        },
+        {
+          "command": "sift.startCommit",
+          "when": "view == sift.plan && viewItem == commit",
+          "group": "1@1"
+        },
+        {
+          "command": "sift.approveCommit",
+          "when": "view == sift.plan && viewItem == commit-current",
+          "group": "inline@1"
+        },
+        {
+          "command": "sift.renameCommit",
+          "when": "view == sift.plan && viewItem =~ /^commit(-current)?$/",
+          "group": "1@2"
+        },
+        {
+          "command": "sift.moveCommitUp",
+          "when": "view == sift.plan && viewItem =~ /^commit(-current)?$/",
+          "group": "2@1"
+        },
+        {
+          "command": "sift.moveCommitDown",
+          "when": "view == sift.plan && viewItem =~ /^commit(-current)?$/",
+          "group": "2@2"
+        },
+        {
+          "command": "sift.deleteCommit",
+          "when": "view == sift.plan && viewItem =~ /^commit(-current)?$/",
+          "group": "3@1"
+        },
+        {
+          "command": "sift.markDone",
+          "when": "viewItem =~ /^file-(todo|in-progress)$/",
+          "group": "inline@1"
+        },
+        {
+          "command": "sift.markDone",
+          "when": "viewItem =~ /^file-/",
+          "group": "1@1"
+        },
+        {
+          "command": "sift.markInProgress",
+          "when": "viewItem =~ /^file-/",
+          "group": "1@2"
+        },
+        {
+          "command": "sift.markTodo",
+          "when": "viewItem =~ /^file-/",
+          "group": "1@3"
+        },
+        {
+          "command": "sift.moveToCommit",
+          "when": "viewItem =~ /^file-/",
+          "group": "2@1"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "sift.toggleDiffMode",
+          "when": "sift.active && isInDiffEditor",
+          "group": "navigation@1"
+        },
+        {
+          "command": "sift.markDone",
+          "when": "sift.active && isInDiffEditor",
+          "group": "navigation@2"
+        },
+        {
+          "command": "sift.nextTodo",
+          "when": "sift.active && isInDiffEditor",
+          "group": "navigation@3"
+        },
+        {
+          "command": "sift.compareVersions",
+          "when": "sift.active && isInDiffEditor",
+          "group": "navigation@4"
+        },
+        {
+          "command": "sift.sendToClaude",
+          "when": "sift.active && isInDiffEditor",
+          "group": "navigation@0"
+        },
+        {
+          "command": "sift.toggleExplanations",
+          "when": "sift.active && isInDiffEditor",
+          "group": "navigation@5"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "sift.openDiff",
+          "when": "false"
+        },
+        {
+          "command": "sift.comment.create",
+          "when": "false"
+        },
+        {
+          "command": "sift.comment.reply",
+          "when": "false"
+        },
+        {
+          "command": "sift.comment.resolve",
+          "when": "false"
+        },
+        {
+          "command": "sift.comment.reopen",
+          "when": "false"
+        },
+        {
+          "command": "sift.comment.delete",
+          "when": "false"
+        }
+      ],
+      "comments/commentThread/context": [
+        {
+          "command": "sift.comment.create",
+          "group": "inline",
+          "when": "commentController == sift && commentThreadIsEmpty"
+        },
+        {
+          "command": "sift.comment.reply",
+          "group": "inline",
+          "when": "commentController == sift && !commentThreadIsEmpty"
+        }
+      ],
+      "comments/commentThread/title": [
+        {
+          "command": "sift.comment.resolve",
+          "group": "inline@1",
+          "when": "commentController == sift && commentThread =~ /-(open|sent|answered)$/"
+        },
+        {
+          "command": "sift.comment.reopen",
+          "group": "inline@1",
+          "when": "commentController == sift && commentThread =~ /-resolved$/"
+        },
+        {
+          "command": "sift.comment.delete",
+          "group": "inline@2",
+          "when": "commentController == sift && !commentThreadIsEmpty"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "sift.markDone",
+        "key": "ctrl+alt+d",
+        "mac": "cmd+alt+d",
+        "when": "sift.active"
+      },
+      {
+        "command": "sift.markTodo",
+        "key": "ctrl+alt+u",
+        "mac": "cmd+alt+u",
+        "when": "sift.active"
+      },
+      {
+        "command": "sift.nextTodo",
+        "key": "ctrl+alt+n",
+        "mac": "cmd+alt+n",
+        "when": "sift.active"
+      },
+      {
+        "command": "sift.toggleDiffMode",
+        "key": "ctrl+alt+m",
+        "mac": "cmd+alt+m",
+        "when": "sift.active"
+      },
+      {
+        "command": "sift.sendToClaude",
+        "key": "ctrl+alt+enter",
+        "mac": "cmd+alt+enter",
+        "when": "sift.active && !commentEditorFocused"
+      }
+    ],
+    "configuration": {
+      "title": "Sift",
+      "properties": {
+        "sift.stateLocation": {
+          "type": "string",
+          "enum": [
+            "repo",
+            "workspaceStorage"
+          ],
+          "enumDescriptions": [
+            "<repo>/.sift/state.json (excluded from git via .git/info/exclude)",
+            "VS Code workspace storage (outside the repo)"
+          ],
+          "default": "repo",
+          "description": "Where the review state file is stored."
+        },
+        "sift.snapshotMaxFileSizeMB": {
+          "type": "number",
+          "default": 5,
+          "minimum": 0,
+          "description": "New (untracked) files larger than this are left out of snapshots."
+        },
+        "sift.mcpPort": {
+          "type": "number",
+          "default": 47821,
+          "description": "Port of the local MCP server Claude Code connects to (127.0.0.1 only). Use a different port per open window."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "watch": "node build.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "package": "npm run typecheck && npm run build -- --production && vsce package --no-dependencies --allow-missing-repository --skip-license"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/vscode": "~1.95.0",
+    "@vscode/vsce": "^3.2.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "zod": "^4.6.7"
+  }
+}

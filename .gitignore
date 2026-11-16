@@ -1,5 +1,28 @@
+# Dependencies
 node_modules/
+
+# Build output
 dist/
 out/
 *.vsix
+
+# Tests
+coverage/
+.vscode-test/
+
+# Sift's own review state, if a review is run on this repo
 .sift/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Environment
+.env
+.env.*
+
+# OS and editor noise
+.DS_Store
+Thumbs.db
+*.swp
+.idea/

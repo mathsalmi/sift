@@ -54,9 +54,6 @@ export function fileDescription(file: ReviewFile, withDir: boolean): string {
   } else if (file.adds !== null || file.dels !== null) {
     parts.push(`+${file.adds ?? '?'} -${file.dels ?? '?'}`);
   }
-  if (file.changeType !== 'modified') {
-    parts.push(file.changeType);
-  }
   if (file.changedInIteration !== undefined) {
     parts.push(`changed in v${file.changedInIteration}`);
   }

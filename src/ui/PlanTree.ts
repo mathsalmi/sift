@@ -2,6 +2,7 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 import type { ReviewController } from '../controller/ReviewController';
 import type { PlanCommit, ReviewFile } from '../core/types';
+import { changeUri } from './ChangeDecorations';
 import { fileTreeChildren } from './fileTree';
 import { COMMIT_STATUS_LABEL, commitIcon, fileCheckbox, fileDescription, fileIcon } from './icons';
 import type { ViewOptions } from './ViewOptions';
@@ -186,7 +187,7 @@ export class PlanTree implements vscode.TreeDataProvider<PlanNode>, vscode.TreeD
     item.description = fileDescription(file, !this.options.asTree);
     item.iconPath = fileIcon(file);
     item.tooltip = `${file.path}\n${file.changeType} · ${STATUS_TEXT[file.status]}`;
-    item.resourceUri = vscode.Uri.file(file.path);
+    item.resourceUri = changeUri(file);
     if (committed) {
       item.contextValue = 'file-committed';
     } else {

@@ -8,6 +8,7 @@ import { GitRunner } from './git/GitRunner';
 import { SnapshotService } from './git/SnapshotService';
 import { StateStore } from './state/StateStore';
 import { BoardTree, type BoardNode } from './ui/BoardTree';
+import { ChangeDecorations } from './ui/ChangeDecorations';
 import { CommentsManager, type ThreadComment } from './ui/Comments';
 import { PlanTree, type PlanNode } from './ui/PlanTree';
 import { SCHEME, SnapshotContentProvider } from './ui/SnapshotContentProvider';
@@ -46,6 +47,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const controller = new ReviewController(root, gitDir, git, snapshots, new StateStore(statePath), useRepo);
   const viewOptions = new ViewOptions(context.globalState);
   const planTree = new PlanTree(controller, viewOptions);
+  context.subscriptions.push(vscode.window.registerFileDecorationProvider(new ChangeDecorations()));
   const boardTree = new BoardTree(controller, viewOptions);
 
   const planView = vscode.window.createTreeView('sift.plan', {

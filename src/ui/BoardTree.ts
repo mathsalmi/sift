@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import type { ReviewController } from '../controller/ReviewController';
 import type { FileStatus, ReviewFile } from '../core/types';
+import { changeUri } from './ChangeDecorations';
 import { fileTreeChildren } from './fileTree';
 import { fileCheckbox, fileDescription, fileIcon } from './icons';
 import type { ViewOptions } from './ViewOptions';
@@ -77,7 +78,7 @@ export class BoardTree implements vscode.TreeDataProvider<BoardNode> {
     item.id = `board:${file.commitId ?? 'none'}:${file.path}`;
     item.description = fileDescription(file, false);
     item.iconPath = fileIcon(file);
-    item.resourceUri = vscode.Uri.file(file.path);
+    item.resourceUri = changeUri(file);
     item.checkboxState = fileCheckbox(file);
     item.contextValue = `file-${file.status}`;
     item.command = { command: 'sift.openDiff', title: 'Open diff', arguments: [file.path] };

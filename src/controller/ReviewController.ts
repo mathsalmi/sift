@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
 import * as vscode from 'vscode';
 import { ReviewModel, type SyncOutcome } from '../core/ReviewModel';
+import { ignorePaths, trackedPaths, type IgnoreTarget } from '../git/ignore';
 import type { FileStatus, IterationAuthor, PlanInput, ReviewThread } from '../core/types';
 import type { GitRunner } from '../git/GitRunner';
 import { commitPaths, commitsBetween, currentHead, fileDiff, hasStagedChanges, listChanges, operationInProgress } from '../git/changes';
@@ -119,6 +120,18 @@ export class ReviewController implements vscode.Disposable {
     const outside = head === last ? [] : await commitsBetween(this.git, last, head);
     model.setHead(head);
     return model.syncChanges(await listChanges(this.git), outside);
+  }
+
+  /** Git-tracked files among `paths`: adding them to an ignore file would not hide their changes. */
+  async trackedPaths(paths: string[]): Promise<string[]> {
+    return trackedPaths(this.git, paths);
+  }
+
+  /** Adds the files to .gitignore or .git/info/exclude, then drops them from the review. Returns the ignore file. */
+  async ignoreFiles(paths: string[], target: IgnoreTarget): Promise<string> {
+    const file = await ignorePaths(this.git, paths, target);
+    await this.refresh();
+    return file;
   }
 
   async abort(): Promise<void> {

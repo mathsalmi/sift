@@ -8,6 +8,7 @@ import { GitRunner } from './git/GitRunner';
 import { SnapshotService } from './git/SnapshotService';
 import { StateStore } from './state/StateStore';
 import { BoardTree, type BoardNode } from './ui/BoardTree';
+import type { IgnoreTarget } from './git/ignore';
 import { ChangeDecorations } from './ui/ChangeDecorations';
 import { CommentsManager, type ThreadComment } from './ui/Comments';
 import { PlanTree, type PlanNode } from './ui/PlanTree';
@@ -383,11 +384,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     void vscode.window.showInformationMessage(`Snapshot v${n} taken. "This round" diffs now show v${n - 1} ↔ v${n}.`);
   });
 
+  /** Files a file action applies to: the clicked tab, the selected tree rows, or the active editor. */
+  const actionPaths = (node?: TreeNode | vscode.Uri, selected?: TreeNode[]): string[] => {
+    if (node instanceof vscode.Uri) {
+      // From an editor tab's context menu the argument is the tab's file.
+      const tabPath = controller.reviewPath(node);
+      return tabPath ? [tabPath] : [];
+    }
+    return selectedPaths(controller, node, selected);
+  };
+
   const setStatus = (status: FileStatus) => async (node?: TreeNode | vscode.Uri, selected?: TreeNode[]) => {
-    // From an editor tab's context menu the argument is the tab's file.
     const fromTab = node instanceof vscode.Uri;
-    const tabPath = fromTab ? controller.reviewPath(node) : null;
-    const paths = fromTab ? (tabPath ? [tabPath] : []) : selectedPaths(controller, node, selected);
+    const paths = actionPaths(node, selected);
     if (paths.length === 0) {
       void vscode.window.showInformationMessage('Select a file in the tree or open one in the diff editor.');
       return;
@@ -404,6 +413,36 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   register('sift.unapproveFile', setStatus('in-progress'));
   register('sift.markInProgress', setStatus('in-progress'));
   register('sift.markTodo', setStatus('todo'));
+
+  const ignore = (target: IgnoreTarget) => async (node?: TreeNode | vscode.Uri, selected?: TreeNode[]) => {
+    const paths = actionPaths(node, selected);
+    if (paths.length === 0) {
+      void vscode.window.showInformationMessage('Select a file in the tree or open one in the diff editor.');
+      return;
+    }
+    const where = target === 'gitignore' ? '.gitignore' : '.git/info/exclude';
+    const tracked = await controller.trackedPaths(paths);
+    if (tracked.length > 0) {
+      const names = tracked.length === 1 ? path.posix.basename(tracked[0]) : `${tracked.length} of these files`;
+      const choice = await vscode.window.showWarningMessage(
+        `Git already tracks ${names}, so adding ${tracked.length === 1 ? 'it' : 'them'} to ${where} won't hide the changes.`,
+        {
+          modal: true,
+          detail: 'Ignore rules only apply to untracked files. To stop tracking, run "git rm --cached <file>" and commit that.',
+        },
+        `Add to ${where} anyway`,
+      );
+      if (!choice) {
+        return;
+      }
+    }
+    await controller.ignoreFiles(paths, target);
+    await comments.rerender();
+    const what = paths.length === 1 ? path.posix.basename(paths[0]) : `${paths.length} files`;
+    void vscode.window.setStatusBarMessage(`$(eye-closed) Added ${what} to ${where}`, 4000);
+  };
+  register('sift.ignoreFile', ignore('gitignore'));
+  register('sift.excludeFile', ignore('exclude'));
 
   register('sift.revealFile', async (uri?: vscode.Uri) => {
     const filePath = uri instanceof vscode.Uri ? controller.reviewPath(uri) : controller.activeFilePath();

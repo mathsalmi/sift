@@ -2,9 +2,18 @@
   "version": "2.0.0",
   "tasks": [
     {
+      "label": "Install Sift",
+      "detail": "Package the extension and install it in this VS Code (then reload the window)",
+      "type": "shell",
+      "command": "npm run package && code --install-extension sift-0.3.0.vsix --force",
+      "group": { "kind": "build", "isDefault": true },
+      "problemMatcher": [],
+      "presentation": { "reveal": "silent", "revealProblems": "onProblem", "clear": true }
+    },
+    {
       "type": "npm",
       "script": "build",
-      "group": { "kind": "build", "isDefault": true },
+      "group": "build",
       "problemMatcher": "$esbuild"
     },
     {

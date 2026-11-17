@@ -58,6 +58,28 @@ export async function currentHead(git: GitRunner): Promise<string> {
   return result.stdout.trim();
 }
 
+/** Commits reachable from `head` but not from `base`, oldest first, with the files they touch. Empty when `base` is unknown. */
+export async function commitsBetween(
+  git: GitRunner,
+  base: string,
+  head: string,
+): Promise<Array<{ sha: string; subject: string; files: string[] }>> {
+  const result = await git.exec(['log', '--reverse', '--no-renames', '--name-only', '--format=%x1e%H%x1f%s', `${base}..${head}`], {
+    okCodes: [0, 128],
+  });
+  if (result.exitCode !== 0) {
+    return [];
+  }
+  return result.stdout
+    .split('\x1e')
+    .filter((chunk) => chunk.includes('\x1f'))
+    .map((chunk) => {
+      const [header, ...files] = chunk.split('\n');
+      const [sha, subject] = header.split('\x1f');
+      return { sha, subject, files: files.map((f) => f.trim()).filter(Boolean) };
+    });
+}
+
 export async function hasStagedChanges(git: GitRunner): Promise<boolean> {
   const result = await git.exec(['diff', '--cached', '--quiet'], { okCodes: [0, 1] });
   return result.exitCode === 1;

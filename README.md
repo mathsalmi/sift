@@ -133,6 +133,7 @@ Also in the Sift view and command palette: Plan commits with AI · Choose AI… 
 - **AI calls:** Sift sends the prompt (numbered diffs, the file, the thread) to the chosen AI and asks for JSON. Claude Code runs with read-only tools (`Read`, `Grep`, `Glob`) inside the repo, and no MCP servers or slash commands. A one-shot run cannot ask for permission, so anything else is denied unless you allow it with `sift.ai.claudeCodeAdditionalDirectories` or `sift.ai.claudeCodeAllowedTools`. Code changes come back as search/replace edits; Sift applies all of them or none, only inside the repo, then takes a new snapshot so "this round" shows exactly what the AI changed.
 - **Comments:** stored in the state file and anchored by line text, so they follow code that moves. A thread whose line is gone shows as outdated.
 - **Approve:** refuses if the index already has staged changes or HEAD moved outside Sift. Run **Refresh changes** to accept the new HEAD.
+- **Commits made outside Sift** (terminal, Source Control view) are picked up as they happen, and when VS Code starts. A planned commit whose files were all committed is marked committed, matched by subject when possible; one whose files were all reverted leaves the plan. Commits you created empty are left alone.
 - **Start over:** deletes the review state and snapshot refs. Your files and commits are untouched.
 
 ## Limitations and roadmap

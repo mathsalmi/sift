@@ -2,10 +2,10 @@ import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
 import * as vscode from 'vscode';
-import { ReviewModel } from '../core/ReviewModel';
+import { ReviewModel, type SyncOutcome } from '../core/ReviewModel';
 import type { FileStatus, IterationAuthor, PlanInput, ReviewThread } from '../core/types';
 import type { GitRunner } from '../git/GitRunner';
-import { commitPaths, currentHead, fileDiff, hasStagedChanges, listChanges, operationInProgress } from '../git/changes';
+import { commitPaths, commitsBetween, currentHead, fileDiff, hasStagedChanges, listChanges, operationInProgress } from '../git/changes';
 import { type SnapshotService, sessionRefPrefix, snapshotRef } from '../git/SnapshotService';
 import { excludeStateDir, type StateStore } from '../state/StateStore';
 import { SCHEME, snapshotUri } from '../ui/SnapshotContentProvider';
@@ -98,10 +98,27 @@ export class ReviewController implements vscode.Disposable {
     return changes.length;
   }
 
-  async refresh(): Promise<void> {
-    const model = this.require();
-    model.syncChanges(await listChanges(this.git));
+  /**
+   * Re-reads the working tree. When HEAD moved (commits made outside Sift), takes the new HEAD and
+   * marks planned commits whose files were committed as done, so the plan never shows empty commits.
+   */
+  async refresh(): Promise<SyncOutcome> {
+    const outcome = await this.sync(this.require());
     await this.persist();
+    return outcome;
+  }
+
+  /** Syncs the file list with git, taking a HEAD that moved outside Sift into account. */
+  private async sync(model: ReviewModel): Promise<SyncOutcome> {
+    if (await operationInProgress(this.git)) {
+      // Mid-rebase or merge the working tree is temporary: keep the plan as it is until git is done.
+      return { committedOutside: [], removed: [] };
+    }
+    const head = await currentHead(this.git);
+    const last = model.state.session.lastHead;
+    const outside = head === last ? [] : await commitsBetween(this.git, last, head);
+    model.setHead(head);
+    return model.syncChanges(await listChanges(this.git), outside);
   }
 
   async abort(): Promise<void> {
@@ -252,11 +269,8 @@ export class ReviewController implements vscode.Disposable {
   }
 
   /** Accepts the current HEAD after a commit made outside the extension. */
-  async resyncHead(): Promise<void> {
-    const model = this.require();
-    model.setHead(await currentHead(this.git));
-    model.syncChanges(await listChanges(this.git));
-    await this.persist();
+  async resyncHead(): Promise<SyncOutcome> {
+    return this.refresh();
   }
 
   async headMovedOutside(): Promise<boolean> {
@@ -282,7 +296,7 @@ export class ReviewController implements vscode.Disposable {
     model?: string,
   ): Promise<{ commits: number; unassigned: number }> {
     const review = this.require();
-    review.syncChanges(await listChanges(this.git));
+    await this.sync(review);
     const { unassigned } = review.applyPlan(plan, requireAll);
     const now = new Date().toISOString();
     for (const commit of plan.commits) {
@@ -468,7 +482,7 @@ export class ReviewController implements vscode.Disposable {
     if (previous) {
       model.applyRoundChanges(await this.snapshots.changedPaths(previous.treeSha, tree), n);
     }
-    model.syncChanges(await listChanges(this.git));
+    await this.sync(model);
     return n;
   }
 

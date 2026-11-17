@@ -195,19 +195,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   });
 
   register('sift.refresh', async () => {
-    if (await controller.headMovedOutside()) {
-      const choice = await vscode.window.showWarningMessage(
-        'HEAD changed outside Sift. Accept the new HEAD?',
-        { modal: true },
-        'Accept',
-      );
-      if (choice !== 'Accept') {
-        return;
-      }
-      await controller.resyncHead();
-      return;
-    }
-    await controller.refresh();
+    await syncWithGit();
   });
 
   register('sift.abort', async () => {
@@ -693,38 +681,81 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   // ---- file watcher: keep counts and the file list current ----
 
-  let timer: NodeJS.Timeout | undefined;
-  const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(root, '**/*'));
-  const onFsChange = (uri: vscode.Uri) => {
+  /**
+   * Re-reads git: new and reverted files, and commits made outside Sift (in a terminal or the
+   * Source Control view), which mark their planned commits as committed instead of leaving them empty.
+   */
+  const syncWithGit = async (): Promise<void> => {
     if (!controller.review) {
       return;
     }
+    const outcome = await controller.refresh();
+    await comments.rerender();
+    const parts: string[] = [];
+    if (outcome.committedOutside.length > 0) {
+      parts.push(`Committed outside Sift: ${quoteList(outcome.committedOutside)}.`);
+    }
+    if (outcome.removed.length > 0) {
+      parts.push(`Removed from the plan, its changes were reverted: ${quoteList(outcome.removed)}.`);
+    }
+    if (parts.length > 0) {
+      if (controller.review?.state.session.status === 'done') {
+        parts.push('Every commit is done.');
+      }
+      void vscode.window.showInformationMessage(`Sift: ${parts.join(' ')}`);
+    }
+  };
+
+  let timer: NodeJS.Timeout | undefined;
+  const scheduleSync = () => {
+    if (!controller.review) {
+      return;
+    }
+    clearTimeout(timer);
+    timer = setTimeout(() => void syncWithGit().catch(() => undefined), 500);
+  };
+  const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(root, '**/*'));
+  const onFsChange = (uri: vscode.Uri) => {
     const relative = path.relative(root, uri.fsPath);
     if (relative.startsWith('.git') || relative.startsWith('.sift')) {
       return;
     }
-    clearTimeout(timer);
-    timer = setTimeout(() => {
-      controller
-        .refresh()
-        .then(() => comments.rerender())
-        .catch(() => undefined);
-    }, 500);
+    scheduleSync();
   };
+  // Commits, resets and branch switches move HEAD; its reflog and refs change with it.
+  const headWatcher = vscode.workspace.createFileSystemWatcher(
+    new vscode.RelativePattern(vscode.Uri.file(gitDir), '{HEAD,logs/HEAD,refs/heads/**}'),
+  );
   context.subscriptions.push(
     watcher,
     watcher.onDidChange(onFsChange),
     watcher.onDidCreate(onFsChange),
     watcher.onDidDelete(onFsChange),
+    headWatcher,
+    headWatcher.onDidChange(scheduleSync),
+    headWatcher.onDidCreate(scheduleSync),
+    headWatcher.onDidDelete(scheduleSync),
     { dispose: () => clearTimeout(timer) },
   );
 
   await controller.init();
   // Never await UI from activate(): VS Code shows a progress bar on the views until activation ends.
-  void checkPlanFile();
+  // Catch up with commits made while VS Code was closed, then look for a plan file.
+  void syncWithGit()
+    .catch(() => undefined)
+    .then(() => checkPlanFile());
 }
 
 export function deactivate(): void {}
+
+/** "A", "A" and "B", or "A", "B" and 2 more. */
+function quoteList(items: string[]): string {
+  const quoted = items.map((item) => `"${item}"`);
+  if (quoted.length <= 2) {
+    return quoted.join(' and ');
+  }
+  return `${quoted.slice(0, 2).join(', ')} and ${quoted.length - 2} more`;
+}
 
 const SKIP_UNRESOLVED_WARNING = 'sift.skipUnresolvedCommentsWarning';
 const SKIP_START_OVER_WARNING = 'sift.skipStartOverWarning';

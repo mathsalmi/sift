@@ -12,6 +12,21 @@ import type {
   ThreadKind,
 } from './types';
 
+/** A commit made since the session's last known HEAD. */
+export interface OutsideCommit {
+  sha: string;
+  subject: string;
+  files: string[];
+}
+
+/** Subjects of planned commits that `syncChanges` settled because their files are no longer changed. */
+export interface SyncOutcome {
+  /** Committed outside Sift. */
+  committedOutside: string[];
+  /** Its files were reverted: the commit was removed from the plan. */
+  removed: string[];
+}
+
 export interface NewThread {
   kind: ThreadKind;
   path: string;
@@ -176,10 +191,18 @@ export class ReviewModel {
 
   // ---- changes from disk ----
 
-  /** Brings the file list in line with the working tree; files of committed commits are kept as history. */
-  syncChanges(changes: FileChange[]): void {
+  /**
+   * Brings the file list in line with the working tree; files of committed commits are kept as history.
+   *
+   * A planned commit whose files all left the working tree's changes was committed or reverted
+   * outside Sift. If one of `outside` (commits made since the last known HEAD) touched its files,
+   * it is marked committed (matched by subject when possible); otherwise it is removed from the plan.
+   * Commits that were empty before (just created by hand) are left alone.
+   */
+  syncChanges(changes: FileChange[], outside: OutsideCommit[] = []): SyncOutcome {
     const byPath = new Map(changes.map((c) => [c.path, c]));
     const kept: ReviewFile[] = [];
+    const gone: ReviewFile[] = [];
 
     for (const file of this.state.files) {
       if (this.isCommittedFile(file)) {
@@ -189,7 +212,8 @@ export class ReviewModel {
       }
       const change = byPath.get(file.path);
       if (!change) {
-        continue; // reverted: no longer changed
+        gone.push(file); // committed or reverted outside Sift: no longer changed
+        continue;
       }
       file.changeType = change.changeType;
       file.adds = change.adds;
@@ -204,6 +228,53 @@ export class ReviewModel {
     }
 
     this.state.files = kept;
+    return this.settleEmptiedCommits(gone, outside);
+  }
+
+  private settleEmptiedCommits(gone: ReviewFile[], outside: OutsideCommit[]): SyncOutcome {
+    const outcome: SyncOutcome = { committedOutside: [], removed: [] };
+    const emptied = new Set(gone.map((f) => f.commitId).filter((id): id is string => id !== null));
+    for (const commit of this.commitsInOrder()) {
+      if (!emptied.has(commit.id) || commit.status === 'committed' || this.filesOf(commit.id).length > 0) {
+        continue;
+      }
+      const subject = commit.message.split('\n')[0].trim();
+      const files = gone.filter((f) => f.commitId === commit.id);
+      const touched = outside.filter((c) => files.some((f) => c.files.includes(f.path)));
+      if (touched.length > 0) {
+        // Prefer the outside commit with the same subject; else the last one that touched its files.
+        const match = touched.find((c) => c.subject.trim() === subject) ?? touched[touched.length - 1];
+        commit.status = 'committed';
+        commit.sha = match.sha;
+        // Keep its files as history, approved, like a commit made in Sift.
+        for (const file of files) {
+          file.status = 'done';
+          this.state.files.push(file);
+        }
+        outcome.committedOutside.push(subject);
+      } else {
+        // Its files were reverted: drop the commit and its threads.
+        this.state.commits = this.state.commits.filter((c) => c.id !== commit.id);
+        this.state.threads = this.state.threads.filter((t) => t.commitId !== commit.id);
+        outcome.removed.push(subject);
+      }
+      if (this.state.session.currentCommitId === commit.id) {
+        this.state.session.currentCommitId = null;
+      }
+    }
+    if (outcome.committedOutside.length + outcome.removed.length > 0) {
+      this.threadsRevision++;
+      this.finishIfDone();
+    }
+    return outcome;
+  }
+
+  /** Ends the session once every commit is committed and no file is left unassigned. */
+  private finishIfDone(): void {
+    const pending = this.state.commits.some((c) => c.status !== 'committed');
+    if (!pending && this.filesOf(null).length === 0) {
+      this.state.session.status = 'done';
+    }
   }
 
   setHead(head: string): void {
@@ -423,9 +494,7 @@ export class ReviewModel {
 
     const next = this.commitsInOrder().find((c) => c.status !== 'committed') ?? null;
     this.state.session.currentCommitId = null;
-    if (!next && this.filesOf(null).length === 0) {
-      this.state.session.status = 'done';
-    }
+    this.finishIfDone();
     this.threadsRevision++;
     return next;
   }

@@ -142,6 +142,61 @@ describe('syncChanges', () => {
   });
 });
 
+describe('syncChanges with work done outside Sift', () => {
+  it('marks a planned commit committed when an outside commit took its files', () => {
+    const m = model(['a.ts', 'b.ts']);
+    m.applyPlan({ commits: [{ message: 'A', files: ['a.ts'] }, { message: 'B', files: ['b.ts'] }] });
+    const [a, b] = m.commitsInOrder();
+    m.startCommit(a.id);
+
+    const outcome = m.syncChanges([change('b.ts')], [{ sha: 'x1', subject: 'A', files: ['a.ts'] }]);
+
+    expect(outcome).toEqual({ committedOutside: ['A'], removed: [] });
+    expect(m.getCommit(a.id)).toMatchObject({ status: 'committed', sha: 'x1' });
+    expect(m.findFile('a.ts')).toMatchObject({ commitId: a.id, status: 'done' });
+    expect(m.state.session.currentCommitId).toBeNull();
+    expect(m.getCommit(b.id).status).toBe('planned');
+    expect(m.state.session.status).not.toBe('done');
+  });
+
+  it('prefers the outside commit with the same subject and ends the session when all are done', () => {
+    const m = model(['a.ts', 'b.ts']);
+    m.applyPlan({ commits: [{ message: 'A', files: ['a.ts'] }, { message: 'B', files: ['b.ts'] }] });
+    const [a, b] = m.commitsInOrder();
+
+    m.syncChanges([], [
+      { sha: 'x1', subject: 'B', files: ['a.ts', 'b.ts'] },
+      { sha: 'x2', subject: 'A', files: ['a.ts'] },
+    ]);
+
+    expect(m.getCommit(a.id).sha).toBe('x2');
+    expect(m.getCommit(b.id).sha).toBe('x1');
+    expect(m.state.session.status).toBe('done');
+  });
+
+  it('removes a planned commit whose files were reverted, but keeps commits that were empty already', () => {
+    const m = model(['a.ts', 'b.ts']);
+    m.applyPlan({ commits: [{ message: 'A', files: ['a.ts'] }, { message: 'B', files: ['b.ts'] }] });
+    const empty = m.addCommit('Later');
+
+    const outcome = m.syncChanges([change('b.ts')], []);
+
+    expect(outcome).toEqual({ committedOutside: [], removed: ['A'] });
+    expect(m.commitsInOrder().map((c) => c.message)).toEqual(['B', 'Later']);
+    expect(m.getCommit(empty.id)).toBeDefined();
+  });
+
+  it('keeps a commit that still has some of its files', () => {
+    const m = model(['a.ts', 'b.ts']);
+    m.applyPlan({ commits: [{ message: 'AB', files: ['a.ts', 'b.ts'] }] });
+
+    const outcome = m.syncChanges([change('b.ts')], [{ sha: 'x1', subject: 'part', files: ['a.ts'] }]);
+
+    expect(outcome).toEqual({ committedOutside: [], removed: [] });
+    expect(m.filesOf(m.commitsInOrder()[0].id).map((f) => f.path)).toEqual(['b.ts']);
+  });
+});
+
 describe('commit editing', () => {
   it('reorders planned commits but never moves past a committed one', () => {
     const m = model();

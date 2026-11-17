@@ -141,6 +141,26 @@ describe('ReviewController end to end', () => {
     await expect(controller.approveCurrent()).resolves.toMatchObject({ nextCommitId: null });
   });
 
+  it('marks planned commits committed outside Sift on refresh, so none is left empty', async () => {
+    repo.write('src/a.ts', 'a changed\n');
+    repo.write('src/b.ts', 'b changed\n');
+    await controller.startReview();
+    writePlan({ commits: [{ message: 'Change a', files: ['src/a.ts'] }, { message: 'Change b', files: ['src/b.ts'] }] });
+    await controller.loadPlan();
+
+    repo.git('add', 'src/a.ts');
+    repo.git('commit', '-q', '-m', 'Change a');
+    repo.git('add', 'src/b.ts');
+    repo.git('commit', '-q', '-m', 'Change b');
+
+    const outcome = await controller.refresh();
+    const model = controller.review!;
+    expect(outcome.committedOutside).toEqual(['Change a', 'Change b']);
+    expect(model.commitsInOrder().map((c) => c.status)).toEqual(['committed', 'committed']);
+    expect(model.commitsInOrder()[1].sha).toBe(repo.git('rev-parse', 'HEAD').trim());
+    expect(model.state.session.status).toBe('done');
+  });
+
   it('abort removes state and snapshot refs but keeps files', async () => {
     repo.write('src/a.ts', 'changed\n');
     await controller.startReview();

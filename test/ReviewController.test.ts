@@ -72,7 +72,7 @@ describe('ReviewController end to end', () => {
 
     // A fix arrives (e.g. from Claude): new round
     repo.write('src/a.ts', 'a fixed\n');
-    expect(await controller.takeSnapshot('claude')).toBe(1);
+    expect(await controller.takeSnapshot('ai')).toBe(1);
     expect(model.findFile('src/a.ts')).toMatchObject({ status: 'in-progress', changedInIteration: 1 });
     expect(model.findFile('src/c.ts')?.status).toBe('done');
 
@@ -92,7 +92,7 @@ describe('ReviewController end to end', () => {
     expect(await controller.takeSnapshot('user')).toBeNull();
 
     // Approve
-    await expect(controller.approveCurrent()).rejects.toThrow(/not marked done/);
+    await expect(controller.approveCurrent()).rejects.toThrow(/not approved yet/);
     await controller.setStatus(['src/a.ts'], 'done');
     const result = await controller.approveCurrent();
     expect(result.nextCommitId).toBe(second.id);
@@ -153,5 +153,48 @@ describe('ReviewController end to end', () => {
     expect(controller.review).toBeNull();
     expect(repo.git('for-each-ref', 'refs/sift')).toBe('');
     expect(repo.git('status', '--porcelain')).toBe(' M src/a.ts\n');
+  });
+});
+
+describe('plan file pickup', () => {
+  it('starts a session and applies a new plan file without any click, once', async () => {
+    repo.write('src/a.ts', 'a changed\n');
+    repo.write('src/b.ts', 'b changed\n');
+    writePlan({
+      commits: [
+        {
+          message: 'Change a',
+          files: ['src/a.ts'],
+          explanations: [{ path: 'src/a.ts', line: 1, body: 'Renamed for clarity.' }],
+        },
+      ],
+    });
+
+    expect(await controller.checkPlanFile()).toEqual({ result: 'applied', commits: 1, unassigned: 1, started: true });
+    const model = controller.review!;
+    expect(model.commitsInOrder().map((c) => c.message)).toEqual(['Change a']);
+    expect(model.state.threads).toMatchObject([{ kind: 'explanation', path: 'src/a.ts', line: 0, lineText: 'a changed' }]);
+    expect(model.state.session.showExplanations).toBe(true);
+
+    // Same file again: nothing to do.
+    expect(await controller.checkPlanFile()).toEqual({ result: 'none' });
+
+    // A different plan while one is under review: ask first.
+    writePlan({ commits: [{ message: 'Everything', files: ['src/a.ts', 'src/b.ts'] }] });
+    const outcome = await controller.checkPlanFile();
+    expect(outcome.result).toBe('needs-confirm');
+    await controller.dismissPlanFile((outcome as { hash: string }).hash);
+    expect(await controller.checkPlanFile()).toEqual({ result: 'none' });
+  });
+
+  it('abort deletes the plan file so it does not start a new session', async () => {
+    repo.write('src/a.ts', 'a changed\n');
+    writePlan({ commits: [{ message: 'A', files: ['src/a.ts'] }] });
+    await controller.checkPlanFile();
+
+    await controller.abort();
+
+    expect(await controller.checkPlanFile()).toEqual({ result: 'none' });
+    expect(controller.review).toBeNull();
   });
 });

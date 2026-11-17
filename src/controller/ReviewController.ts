@@ -1,23 +1,22 @@
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import * as vscode from 'vscode';
 import { ReviewModel } from '../core/ReviewModel';
-import type { FileStatus, IterationAuthor, PendingApproval, PlanInput, ReviewThread } from '../core/types';
+import type { FileStatus, IterationAuthor, PlanInput, ReviewThread } from '../core/types';
 import type { GitRunner } from '../git/GitRunner';
-import { commitPaths, currentHead, hasStagedChanges, listChanges, operationInProgress } from '../git/changes';
+import { commitPaths, currentHead, fileDiff, hasStagedChanges, listChanges, operationInProgress } from '../git/changes';
 import { type SnapshotService, sessionRefPrefix, snapshotRef } from '../git/SnapshotService';
 import { excludeStateDir, type StateStore } from '../state/StateStore';
 import { SCHEME, snapshotUri } from '../ui/SnapshotContentProvider';
 
 export type DiffMode = 'round' | 'cumulative';
 
-export type FeedbackEvent =
-  | { event: 'feedback'; commitId: string; threads: ReviewThread[] }
-  | { event: 'approved'; approval: PendingApproval }
-  | { event: 'none' };
-
-type Waiter = () => void;
+/** What happened to .sift/plan.json when it was checked. */
+export type PlanFileResult =
+  | { result: 'none' }
+  | { result: 'applied'; commits: number; unassigned: number; started: boolean }
+  | { result: 'needs-confirm'; hash: string };
 
 /**
  * Single owner of the review state. UI parts call its methods and re-render on `onDidChange`.
@@ -29,7 +28,6 @@ export class ReviewController implements vscode.Disposable {
 
   diffMode: DiffMode = 'round';
   boardShowAll = false;
-  private waiters: Waiter[] = [];
 
   constructor(
     readonly root: string,
@@ -48,13 +46,7 @@ export class ReviewController implements vscode.Disposable {
     return this.store.filePath;
   }
 
-  /** True while Claude is blocked in review_wait_for_feedback. */
-  get claudeIsWaiting(): boolean {
-    return this.waiters.length > 0;
-  }
-
   dispose(): void {
-    this.wakeWaiters();
     this.changed.dispose();
   }
 
@@ -70,6 +62,15 @@ export class ReviewController implements vscode.Disposable {
   }
 
   // ---- session ----
+
+  /** Starts a session from the uncommitted changes when there is none yet. Returns true when it started one. */
+  async ensureSession(): Promise<boolean> {
+    if (this.model) {
+      return false;
+    }
+    await this.startReview();
+    return true;
+  }
 
   async startReview(): Promise<number> {
     if (this.model) {
@@ -92,6 +93,7 @@ export class ReviewController implements vscode.Disposable {
       await excludeStateDir(this.gitDir);
     }
     this.model = ReviewModel.create(newSessionId(), head, changes, new Date().toISOString());
+    this.model.state.session.planFileHash = '';
     await this.persist();
     return changes.length;
   }
@@ -106,8 +108,9 @@ export class ReviewController implements vscode.Disposable {
     const model = this.require();
     await this.snapshots.deleteRefs(sessionRefPrefix(model.state.session.id));
     await this.store.remove();
+    // A leftover plan file would otherwise start a new session on the next load.
+    await fs.rm(this.planFilePath(), { force: true });
     this.model = null;
-    this.wakeWaiters();
     await this.fire();
   }
 
@@ -118,15 +121,51 @@ export class ReviewController implements vscode.Disposable {
   }
 
   async loadPlan(): Promise<{ commits: number; unassigned: number }> {
-    const model = this.require();
     const raw = await fs.readFile(this.planFilePath(), 'utf8').catch(() => {
       throw new Error(`No plan found at ${this.planFilePath()}.`);
     });
-    const plan = JSON.parse(raw) as PlanInput;
-    model.syncChanges(await listChanges(this.git));
-    const result = model.applyPlan(plan);
+    await this.ensureSession();
+    const result = await this.applyPlanInput(parsePlan(raw), false);
+    this.require().state.session.planFileHash = hashOf(raw);
     await this.persist();
-    return { commits: plan.commits.length, unassigned: result.unassigned };
+    return result;
+  }
+
+  /**
+   * Picks up .sift/plan.json when it is new: applies it right away (starting a session if needed),
+   * or asks first when it would replace a plan that is already under review.
+   */
+  async checkPlanFile(): Promise<PlanFileResult> {
+    const raw = await fs.readFile(this.planFilePath(), 'utf8').catch(() => null);
+    if (raw === null || !raw.trim()) {
+      return { result: 'none' };
+    }
+    const hash = hashOf(raw);
+    if (this.model?.state.session.planFileHash === hash) {
+      return { result: 'none' };
+    }
+    if (this.model && this.model.state.session.planFileHash === undefined) {
+      // Session from before plan files were tracked: its plan.json was already loaded by hand.
+      this.model.state.session.planFileHash = hash;
+      await this.persist();
+      return { result: 'none' };
+    }
+    if (this.model && this.model.state.commits.some((c) => c.status !== 'committed')) {
+      return { result: 'needs-confirm', hash };
+    }
+    const started = await this.ensureSession();
+    const result = await this.applyPlanInput(parsePlan(raw), false);
+    this.require().state.session.planFileHash = hash;
+    await this.persist();
+    return { result: 'applied', ...result, started };
+  }
+
+  /** Remembers a plan file the user chose not to load, so it isn't offered again. */
+  async dismissPlanFile(hash: string): Promise<void> {
+    if (this.model) {
+      this.model.state.session.planFileHash = hash;
+      await this.persist();
+    }
   }
 
   async newCommit(message: string): Promise<string> {
@@ -209,7 +248,6 @@ export class ReviewController implements vscode.Disposable {
       }
     }
     await this.persist();
-    this.wakeWaiters();
     return { sha, nextCommitId: next?.id ?? null };
   }
 
@@ -228,14 +266,33 @@ export class ReviewController implements vscode.Disposable {
     return (await currentHead(this.git)) !== this.model.state.session.lastHead;
   }
 
-  // ---- plan from Claude ----
+  // ---- plan from the AI ----
 
-  /** Plan from Claude: every pending file must be listed exactly once. */
-  async setPlan(plan: PlanInput): Promise<void> {
-    const model = this.require();
-    model.syncChanges(await listChanges(this.git));
-    model.applyPlan(plan, true);
+  /** Plan from the AI: every pending file must be listed exactly once. Starts a session if needed. */
+  async setPlan(plan: PlanInput, model?: string): Promise<void> {
+    await this.ensureSession();
+    await this.applyPlanInput(plan, true, model);
     await this.persist();
+  }
+
+  /** Applies a plan and its explanations; the caller persists. */
+  private async applyPlanInput(
+    plan: PlanInput,
+    requireAll: boolean,
+    model?: string,
+  ): Promise<{ commits: number; unassigned: number }> {
+    const review = this.require();
+    review.syncChanges(await listChanges(this.git));
+    const { unassigned } = review.applyPlan(plan, requireAll);
+    const now = new Date().toISOString();
+    for (const commit of plan.commits) {
+      for (const note of commit.explanations ?? []) {
+        const lines = await this.readLines(note.path);
+        const index = Math.min(Math.max(note.line - 1, 0), Math.max(lines.length - 1, 0));
+        review.setExplanation(note.path, index, lines[index] ?? '', note.body, now, model);
+      }
+    }
+    return { commits: plan.commits.length, unassigned };
   }
 
   // ---- comments ----
@@ -254,8 +311,8 @@ export class ReviewController implements vscode.Disposable {
     await this.persist();
   }
 
-  async replyAsClaude(threadId: string, body: string, resolve: boolean): Promise<ReviewThread> {
-    const thread = this.require().reply(threadId, 'claude', body, resolve, new Date().toISOString());
+  async replyAsAi(threadId: string, body: string, model: string, resolve = false): Promise<ReviewThread> {
+    const thread = this.require().reply(threadId, 'ai', body, resolve, new Date().toISOString(), model);
     await this.persist();
     return thread;
   }
@@ -265,12 +322,22 @@ export class ReviewController implements vscode.Disposable {
     await this.persist();
   }
 
+  async editMessage(threadId: string, index: number, body: string): Promise<void> {
+    this.require().editMessage(threadId, index, body);
+    await this.persist();
+  }
+
+  async deleteMessage(threadId: string, index: number): Promise<void> {
+    this.require().deleteMessage(threadId, index);
+    await this.persist();
+  }
+
   async deleteThread(threadId: string): Promise<void> {
     this.require().deleteThread(threadId);
     await this.persist();
   }
 
-  /** Claude's explanation on a 1-based line of a file, anchored to that line's current text. */
+  /** An AI explanation on a 1-based line of a file, anchored to that line's current text. */
   async explain(filePath: string, line: number, body: string): Promise<ReviewThread> {
     const lines = await this.readLines(filePath);
     const index = Math.min(Math.max(line - 1, 0), Math.max(lines.length - 1, 0));
@@ -284,87 +351,30 @@ export class ReviewController implements vscode.Disposable {
     await this.persist();
   }
 
-  // ---- the loop with Claude ----
+  // ---- asking the AI ----
 
-  async sendToClaude(): Promise<number> {
-    const model = this.require();
-    const commit = model.currentCommit();
-    if (!commit) {
-      throw new Error('Start reviewing a commit first.');
-    }
-    const count = model.sendFeedback(commit.id);
+  /** Marks the given threads (or every open comment) as being answered. Returns them. */
+  async startAsking(threadIds?: string[]): Promise<ReviewThread[]> {
+    const threads = this.require().startAsking(threadIds);
     await this.persist();
-    this.wakeWaiters();
-    return count;
+    return threads;
   }
 
-  /** Claude finished applying feedback: snapshot the next round and hand the turn back. */
-  async markReady(): Promise<number | null> {
-    const model = this.require();
-    const commit = model.currentCommit();
-    if (!commit) {
-      throw new Error('No commit is in review.');
+  async failAsking(threadId: string, error: string): Promise<void> {
+    if (!this.model?.state.threads.some((t) => t.id === threadId)) {
+      return;
     }
-    const n = await this.snapshot(commit.id, 'claude', false);
-    model.finishClaudeTurn(commit.id);
+    this.model.failAsking(threadId, error);
     await this.persist();
-    return n;
-  }
-
-  /** Clears and returns the approval Claude hasn't seen yet. */
-  async takeApproval(): Promise<PendingApproval | null> {
-    const approval = this.require().takePendingApproval();
-    await this.persist();
-    return approval;
-  }
-
-  /** What Claude should act on now, without waiting. */
-  pendingEvent(): FeedbackEvent {
-    const model = this.model;
-    if (!model) {
-      return { event: 'none' };
-    }
-    const approval = model.state.session.pendingApproval;
-    if (approval) {
-      return { event: 'approved', approval };
-    }
-    const commit = model.currentCommit();
-    if (commit && model.state.session.turn === 'claude') {
-      const threads = model.sentThreads(commit.id);
-      if (threads.length > 0) {
-        return { event: 'feedback', commitId: commit.id, threads };
-      }
-    }
-    return { event: 'none' };
-  }
-
-  /** Resolves when the user sends feedback or approves, or with "none" on timeout or cancel. */
-  async waitForFeedback(timeoutMs: number, signal?: AbortSignal): Promise<FeedbackEvent> {
-    const deadline = Date.now() + timeoutMs;
-    for (;;) {
-      const event = this.pendingEvent();
-      if (event.event !== 'none') {
-        return event;
-      }
-      const remaining = deadline - Date.now();
-      if (remaining <= 0 || signal?.aborted || !this.model) {
-        return { event: 'none' };
-      }
-      const wasWaiting = this.claudeIsWaiting;
-      const sleep = this.sleepUntilWoken(remaining, signal);
-      if (!wasWaiting) {
-        this.changed.fire();
-      }
-      await sleep;
-      if (!this.claudeIsWaiting) {
-        this.changed.fire();
-      }
-    }
   }
 
   // ---- diffs ----
 
-  async openDiff(filePath: string, compare?: { from: number; to: number }): Promise<void> {
+  /**
+   * Opens the diff of a file: by the diff mode, or `compare.from` (a version or HEAD) against
+   * `compare.to` (a version, or the working tree when left out).
+   */
+  async openDiff(filePath: string, compare?: { from: number | 'HEAD'; to?: number }): Promise<void> {
     const model = this.require();
     const file = model.findFile(filePath);
     if (!file) {
@@ -382,14 +392,14 @@ export class ReviewController implements vscode.Disposable {
     let title = `${name} (HEAD ↔ working tree)`;
 
     if (compare) {
-      const from = iterations.find((i) => i.n === compare.from);
-      const to = iterations.find((i) => i.n === compare.to);
-      if (!from || !to) {
+      const from = compare.from === 'HEAD' ? null : iterations.find((i) => i.n === compare.from);
+      const to = compare.to === undefined ? null : iterations.find((i) => i.n === compare.to);
+      if (from === undefined || to === undefined) {
         throw new Error('Unknown version.');
       }
-      left = snapshotUri(from.treeSha, filePath);
-      right = snapshotUri(to.treeSha, filePath);
-      title = `${name} (v${from.n} ↔ v${to.n})`;
+      left = from ? snapshotUri(from.treeSha, filePath) : snapshotUri('HEAD', filePath);
+      right = to ? snapshotUri(to.treeSha, filePath) : workingTree;
+      title = `${name} (${from ? `v${from.n}` : 'HEAD'} ↔ ${to ? `v${to.n}` : 'now'})`;
     } else if (this.diffMode === 'round' && latest && previous) {
       left = snapshotUri(previous.treeSha, filePath);
       title = `${name} (v${previous.n} ↔ v${latest.n} · this round)`;
@@ -406,7 +416,12 @@ export class ReviewController implements vscode.Disposable {
   /** Path of the file shown in the active editor, when it belongs to the review. */
   activeFilePath(): string | null {
     const uri = vscode.window.activeTextEditor?.document.uri;
-    if (!uri || !this.model) {
+    return uri ? this.reviewPath(uri) : null;
+  }
+
+  /** Repo-relative path of a working-tree or snapshot URI, when that file belongs to the review. */
+  reviewPath(uri: vscode.Uri): string | null {
+    if (!this.model) {
       return null;
     }
     let candidate: string | null = null;
@@ -457,27 +472,12 @@ export class ReviewController implements vscode.Disposable {
     return n;
   }
 
-  private sleepUntilWoken(ms: number, signal?: AbortSignal): Promise<void> {
-    return new Promise<void>((resolve) => {
-      const done = () => {
-        clearTimeout(timer);
-        signal?.removeEventListener('abort', done);
-        this.waiters = this.waiters.filter((w) => w !== done);
-        resolve();
-      };
-      const timer = setTimeout(done, ms);
-      signal?.addEventListener('abort', done);
-      this.waiters.push(done);
-    });
+  /** Unified diff of a file against HEAD. */
+  async diffOf(filePath: string): Promise<string> {
+    return fileDiff(this.git, filePath);
   }
 
-  private wakeWaiters(): void {
-    for (const waiter of [...this.waiters]) {
-      waiter();
-    }
-  }
-
-  private async readLines(filePath: string): Promise<string[]> {
+  async readLines(filePath: string): Promise<string[]> {
     const content = await fs.readFile(path.join(this.root, ...filePath.split('/')), 'utf8').catch(() => '');
     return content.split(/\r?\n/);
   }
@@ -488,7 +488,7 @@ export class ReviewController implements vscode.Disposable {
 
   private require(): ReviewModel {
     if (!this.model) {
-      throw new Error('No review session. Run "Sift: Start review" first.');
+      throw new Error('No review session. Click "Plan commits with AI" or "Start review" first.');
     }
     return this.model;
   }
@@ -503,6 +503,18 @@ export class ReviewController implements vscode.Disposable {
   private async fire(): Promise<void> {
     await vscode.commands.executeCommand('setContext', 'sift.active', this.model !== null);
     this.changed.fire();
+  }
+}
+
+function hashOf(text: string): string {
+  return createHash('sha256').update(text).digest('hex').slice(0, 16);
+}
+
+function parsePlan(raw: string): PlanInput {
+  try {
+    return JSON.parse(raw) as PlanInput;
+  } catch (error) {
+    throw new Error(`.sift/plan.json is not valid JSON: ${(error as Error).message}`);
   }
 }
 

@@ -179,3 +179,20 @@ async function exists(filePath: string): Promise<boolean> {
     () => false,
   );
 }
+
+/** Unified diff of one file against HEAD; untracked files come back as all-added. */
+export async function fileDiff(git: GitRunner, filePath: string, maxBytes = 200_000): Promise<string> {
+  const tracked = await git.run(['diff', '--no-color', '--no-renames', 'HEAD', '--', filePath]);
+  if (tracked.trim()) {
+    return tracked;
+  }
+  const content = await fs.readFile(path.join(git.cwd, filePath)).catch(() => null);
+  if (!content || content.includes(0)) {
+    return '';
+  }
+  const lines = content.subarray(0, maxBytes).toString('utf8').split('\n');
+  if (lines.at(-1) === '') {
+    lines.pop();
+  }
+  return [`--- /dev/null`, `+++ b/${filePath}`, `@@ -0,0 +1,${lines.length} @@`, ...lines.map((l) => `+${l}`)].join('\n');
+}

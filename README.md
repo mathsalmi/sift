@@ -105,7 +105,7 @@ Sift also picks up `.sift/plan.json` whenever it is written, by hand or by anoth
 | Next to do | Cmd+Alt+N | Ctrl+Alt+N |
 | Toggle diff mode | Cmd+Alt+M | Ctrl+Alt+M |
 | Send a comment (Ask AI) | Cmd+Enter | Ctrl+Enter |
-| Open the Sift view (outside text fields; there it stays Redo) | Cmd+Shift+Z | Ctrl+Shift+Z |
+| Open the Sift view (also when the sidebar is hidden) | Ctrl+Shift+S | Ctrl+Alt+S |
 
 Diff editor buttons: Ask AI · Previous / next file in the commit · Approve / unapprove file · Compare with (previous version, last commit, or a specific version); and in its **…** menu: Next to do · Show / hide AI explanations.
 

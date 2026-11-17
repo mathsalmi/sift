@@ -775,9 +775,8 @@
       },
       {
         "command": "workbench.view.extension.sift",
-        "key": "ctrl+shift+z",
-        "mac": "cmd+shift+z",
-        "when": "!textInputFocus"
+        "key": "ctrl+alt+s",
+        "mac": "ctrl+shift+s"
       }
     ],
     "configuration": {

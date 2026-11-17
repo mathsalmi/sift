@@ -407,7 +407,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     const filePath = uri instanceof vscode.Uri ? controller.reviewPath(uri) : controller.activeFilePath();
     const file = filePath ? controller.review?.findFile(filePath) : undefined;
     if (!file) {
-      void vscode.window.showInformationMessage('This file is not part of the review.');
+      void vscode.window.showInformationMessage(`${uri instanceof vscode.Uri ? path.basename(uri.fsPath) : 'This file'} is not in the review: it has no uncommitted changes.`);
       return;
     }
     // Revealing expands the commit (and folders) that hold the file.

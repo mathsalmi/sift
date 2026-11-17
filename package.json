@@ -705,7 +705,7 @@
       "editor/title/context": [
         {
           "submenu": "sift.tab",
-          "when": "resourcePath in sift.reviewFiles",
+          "when": "sift.active && resourceScheme =~ /^(file|sift)$/",
           "group": "sift@1"
         }
       ],

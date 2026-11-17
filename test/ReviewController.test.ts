@@ -161,6 +161,20 @@ describe('ReviewController end to end', () => {
     expect(model.state.session.status).toBe('done');
   });
 
+  it('does not redraw on a refresh that changes nothing', async () => {
+    repo.write('src/a.ts', 'changed\n');
+    await controller.startReview();
+    let redraws = 0;
+    controller.onDidChange(() => redraws++);
+
+    await controller.refresh();
+    expect(redraws).toBe(0);
+
+    repo.write('src/b.ts', 'changed\n');
+    await controller.refresh();
+    expect(redraws).toBe(1);
+  });
+
   it('abort removes state and snapshot refs but keeps files', async () => {
     repo.write('src/a.ts', 'changed\n');
     await controller.startReview();

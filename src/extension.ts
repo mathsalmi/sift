@@ -327,12 +327,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   register('sift.openDiff', async (filePath: string) => {
     // Opening a file of another planned commit puts that commit in review.
+    // The diff opens first: starting a commit takes a snapshot, which can take a moment on big trees.
     const model = controller.review;
     const commitId = model?.findFile(filePath)?.commitId;
+    await controller.openDiff(filePath);
     if (model && commitId && model.state.session.currentCommitId !== commitId && model.getCommit(commitId).status !== 'committed') {
       await controller.startCommit(commitId);
     }
-    await controller.openDiff(filePath);
   });
 
   const setDiffMode = async (mode: 'round' | 'cumulative') => {

@@ -104,8 +104,14 @@ export class ReviewController implements vscode.Disposable {
    * marks planned commits whose files were committed as done, so the plan never shows empty commits.
    */
   async refresh(): Promise<SyncOutcome> {
-    const outcome = await this.sync(this.require());
-    await this.persist();
+    const model = this.require();
+    const before = JSON.stringify(model.state);
+    const outcome = await this.sync(model);
+    // Builds and other tools touch files all the time. Redrawing the views for nothing would
+    // swallow clicks that land mid-redraw, so only save and redraw when something changed.
+    if (JSON.stringify(model.state) !== before) {
+      await this.persist();
+    }
     return outcome;
   }
 

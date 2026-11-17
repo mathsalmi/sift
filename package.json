@@ -1,7 +1,7 @@
 {
   "name": "sift",
   "displayName": "Sift",
-  "description": "Sift a large AI-made change set into reviewed, atomic commits, with Claude in the review loop.",
+  "description": "Plan a large change set into reviewed, atomic commits, and ask the AI of your choice about any line.",
   "publisher": "msalmi",
   "version": "0.3.0",
   "private": true,
@@ -42,7 +42,7 @@
     "viewsWelcome": [
       {
         "view": "sift.plan",
-        "contents": "No review session in this repository.\n[Start review](command:sift.start)\nStarts a session from your uncommitted changes. Then load a plan (.sift/plan.json) or create commits by hand.",
+        "contents": "No review session in this repository.\n[$(sparkle) Plan commits with AI](command:sift.planWithAi)\nThe AI groups your uncommitted changes into commits and explains them.\n[Start review](command:sift.start)\nOr start without AI and create commits by hand.\nAI: [choose which AI to use](command:sift.chooseAi)",
         "when": "!sift.active"
       }
     ],
@@ -50,8 +50,7 @@
       {
         "command": "sift.start",
         "title": "Start review",
-        "category": "Sift",
-        "icon": "$(play)"
+        "category": "Sift"
       },
       {
         "command": "sift.refresh",
@@ -64,6 +63,18 @@
         "title": "Load plan from .sift/plan.json",
         "category": "Sift",
         "icon": "$(list-ordered)"
+      },
+      {
+        "command": "sift.planWithAi",
+        "title": "Plan commits with AI",
+        "category": "Sift",
+        "icon": "$(sparkle)"
+      },
+      {
+        "command": "sift.chooseAi",
+        "title": "Choose AI…",
+        "category": "Sift",
+        "icon": "$(hubot)"
       },
       {
         "command": "sift.newCommit",
@@ -95,9 +106,8 @@
       },
       {
         "command": "sift.startCommit",
-        "title": "Start reviewing this commit",
-        "category": "Sift",
-        "icon": "$(debug-start)"
+        "title": "Review this commit",
+        "category": "Sift"
       },
       {
         "command": "sift.openDiff",
@@ -112,7 +122,7 @@
       },
       {
         "command": "sift.compareVersions",
-        "title": "Compare versions…",
+        "title": "A specific version…",
         "category": "Sift",
         "icon": "$(versions)"
       },
@@ -123,10 +133,22 @@
         "icon": "$(device-camera)"
       },
       {
-        "command": "sift.markDone",
-        "title": "Mark reviewed (done)",
+        "command": "sift.revealFile",
+        "title": "Show in Sift sidebar",
         "category": "Sift",
-        "icon": "$(pass)"
+        "icon": "$(list-tree)"
+      },
+      {
+        "command": "sift.markDone",
+        "title": "Approve file",
+        "category": "Sift",
+        "icon": "$(check)"
+      },
+      {
+        "command": "sift.unapproveFile",
+        "title": "Unapprove file",
+        "category": "Sift",
+        "icon": "$(close)"
       },
       {
         "command": "sift.markInProgress",
@@ -142,6 +164,18 @@
         "command": "sift.nextTodo",
         "title": "Next to do",
         "category": "Sift",
+        "icon": "$(debug-step-over)"
+      },
+      {
+        "command": "sift.previousFile",
+        "title": "Previous file in this commit",
+        "category": "Sift",
+        "icon": "$(arrow-left)"
+      },
+      {
+        "command": "sift.nextFile",
+        "title": "Next file in this commit",
+        "category": "Sift",
         "icon": "$(arrow-right)"
       },
       {
@@ -153,7 +187,7 @@
         "command": "sift.approveCommit",
         "title": "Approve and commit",
         "category": "Sift",
-        "icon": "$(git-commit)"
+        "icon": "$(check)"
       },
       {
         "command": "sift.toggleBoardScope",
@@ -163,45 +197,68 @@
       },
       {
         "command": "sift.abort",
-        "title": "Abort session (keeps your files)",
+        "title": "Start over…",
         "category": "Sift"
       },
       {
-        "command": "sift.sendToClaude",
-        "title": "Send to Claude",
+        "command": "sift.askAi",
+        "title": "Ask AI about all open comments",
         "category": "Sift",
-        "icon": "$(send)"
+        "icon": "$(sparkle)"
       },
       {
         "command": "sift.toggleExplanations",
-        "title": "Show / hide Claude's explanations",
+        "title": "Show / hide AI explanations",
         "category": "Sift",
         "icon": "$(lightbulb)"
       },
       {
-        "command": "sift.copyPrompt",
-        "title": "Copy prompt for Claude",
-        "category": "Sift"
-      },
-      {
-        "command": "sift.setupClaude",
-        "title": "Set up Claude Code (MCP)",
-        "category": "Sift",
-        "icon": "$(plug)"
-      },
-      {
-        "command": "sift.installSlashCommand",
-        "title": "Install /sift command for Claude Code",
-        "category": "Sift"
-      },
-      {
         "command": "sift.comment.create",
-        "title": "Add comment",
+        "title": "Add (ask later)",
         "category": "Sift"
       },
       {
         "command": "sift.comment.reply",
-        "title": "Reply",
+        "title": "Add (ask later)",
+        "category": "Sift"
+      },
+      {
+        "command": "sift.comment.ask",
+        "title": "Ask AI",
+        "category": "Sift"
+      },
+      {
+        "command": "sift.comment.askThread",
+        "title": "Ask AI",
+        "category": "Sift",
+        "icon": "$(sparkle)"
+      },
+      {
+        "command": "sift.comment.cancelAsk",
+        "title": "Stop the AI",
+        "category": "Sift",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "sift.comment.edit",
+        "title": "Edit",
+        "category": "Sift",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "sift.comment.deleteMessage",
+        "title": "Delete comment",
+        "category": "Sift",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "sift.comment.saveEdit",
+        "title": "Save",
+        "category": "Sift"
+      },
+      {
+        "command": "sift.comment.cancelEdit",
+        "title": "Cancel",
         "category": "Sift"
       },
       {
@@ -221,19 +278,75 @@
         "title": "Delete thread",
         "category": "Sift",
         "icon": "$(trash)"
+      },
+      {
+        "command": "sift.collapseAll",
+        "title": "Collapse all",
+        "category": "Sift",
+        "icon": "$(collapse-all)"
+      },
+      {
+        "command": "sift.expandAll",
+        "title": "Expand all",
+        "category": "Sift",
+        "icon": "$(expand-all)"
+      },
+      {
+        "command": "sift.viewAsTree",
+        "title": "View as tree",
+        "category": "Sift",
+        "icon": "$(list-tree)"
+      },
+      {
+        "command": "sift.viewAsList",
+        "title": "View as list",
+        "category": "Sift",
+        "icon": "$(list-flat)"
+      },
+      {
+        "command": "sift.diffRound",
+        "title": "Previous version (this round)",
+        "category": "Sift"
+      },
+      {
+        "command": "sift.diffRoundOn",
+        "title": "✓ Previous version (this round)",
+        "category": "Sift"
+      },
+      {
+        "command": "sift.diffCumulative",
+        "title": "Last commit (HEAD): the whole change",
+        "category": "Sift"
+      },
+      {
+        "command": "sift.diffCumulativeOn",
+        "title": "✓ Last commit (HEAD): the whole change",
+        "category": "Sift"
+      },
+      {
+        "command": "sift.comment.copy",
+        "title": "Copy message",
+        "category": "Sift",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "sift.useGithubAvatar",
+        "title": "Use my GitHub picture in comments",
+        "category": "Sift",
+        "icon": "$(account)"
       }
     ],
     "menus": {
       "view/title": [
         {
-          "command": "sift.start",
-          "when": "view == sift.plan && !sift.active",
-          "group": "navigation@1"
+          "command": "sift.planWithAi",
+          "when": "view == sift.plan",
+          "group": "navigation@0"
         },
         {
           "command": "sift.loadPlan",
           "when": "view == sift.plan && sift.active",
-          "group": "navigation@1"
+          "group": "z@3"
         },
         {
           "command": "sift.newCommit",
@@ -266,41 +379,71 @@
           "group": "navigation@1"
         },
         {
-          "command": "sift.sendToClaude",
-          "when": "view == sift.plan && sift.active",
-          "group": "navigation@0"
-        },
-        {
           "command": "sift.toggleExplanations",
           "when": "view == sift.plan && sift.active",
           "group": "navigation@6"
         },
         {
-          "command": "sift.setupClaude",
+          "command": "sift.chooseAi",
           "when": "view == sift.plan",
           "group": "z@0"
         },
         {
-          "command": "sift.copyPrompt",
-          "when": "view == sift.plan && sift.active",
+          "command": "sift.viewAsTree",
+          "when": "view == sift.plan && sift.active && !sift.viewAsTree",
+          "group": "navigation@8"
+        },
+        {
+          "command": "sift.viewAsList",
+          "when": "view == sift.plan && sift.active && sift.viewAsTree",
+          "group": "navigation@8"
+        },
+        {
+          "command": "sift.collapseAll",
+          "when": "view == sift.plan && sift.active && !sift.treeCollapsed",
+          "group": "navigation@9"
+        },
+        {
+          "command": "sift.expandAll",
+          "when": "view == sift.plan && sift.active && sift.treeCollapsed",
+          "group": "navigation@9"
+        },
+        {
+          "command": "sift.viewAsTree",
+          "when": "view == sift.board && sift.active && !sift.viewAsTree",
+          "group": "navigation@8"
+        },
+        {
+          "command": "sift.viewAsList",
+          "when": "view == sift.board && sift.active && sift.viewAsTree",
+          "group": "navigation@8"
+        },
+        {
+          "command": "sift.collapseAll",
+          "when": "view == sift.board && sift.active && !sift.treeCollapsed",
+          "group": "navigation@9"
+        },
+        {
+          "command": "sift.expandAll",
+          "when": "view == sift.board && sift.active && sift.treeCollapsed",
+          "group": "navigation@9"
+        },
+        {
+          "command": "sift.useGithubAvatar",
+          "when": "view == sift.plan",
           "group": "z@2"
         }
       ],
       "view/item/context": [
         {
-          "command": "sift.startCommit",
-          "when": "view == sift.plan && viewItem == commit",
-          "group": "inline@1"
+          "command": "sift.approveCommit",
+          "when": "view == sift.plan && viewItem =~ /^commit(-current)?$/",
+          "group": "1@0"
         },
         {
           "command": "sift.startCommit",
           "when": "view == sift.plan && viewItem == commit",
           "group": "1@1"
-        },
-        {
-          "command": "sift.approveCommit",
-          "when": "view == sift.plan && viewItem == commit-current",
-          "group": "inline@1"
         },
         {
           "command": "sift.renameCommit",
@@ -325,59 +468,69 @@
         {
           "command": "sift.markDone",
           "when": "viewItem =~ /^file-(todo|in-progress)$/",
-          "group": "inline@1"
+          "group": "1@1"
         },
         {
-          "command": "sift.markDone",
-          "when": "viewItem =~ /^file-/",
+          "command": "sift.unapproveFile",
+          "when": "viewItem == file-done",
           "group": "1@1"
         },
         {
           "command": "sift.markInProgress",
-          "when": "viewItem =~ /^file-/",
+          "when": "viewItem =~ /^file-(todo|in-progress|done)$/",
           "group": "1@2"
         },
         {
           "command": "sift.markTodo",
-          "when": "viewItem =~ /^file-/",
+          "when": "viewItem =~ /^file-(todo|in-progress|done)$/",
           "group": "1@3"
         },
         {
           "command": "sift.moveToCommit",
-          "when": "viewItem =~ /^file-/",
+          "when": "viewItem =~ /^file-(todo|in-progress|done)$/",
           "group": "2@1"
         }
       ],
       "editor/title": [
         {
-          "command": "sift.toggleDiffMode",
-          "when": "sift.active && isInDiffEditor",
-          "group": "navigation@1"
-        },
-        {
-          "command": "sift.markDone",
-          "when": "sift.active && isInDiffEditor",
-          "group": "navigation@2"
-        },
-        {
-          "command": "sift.nextTodo",
-          "when": "sift.active && isInDiffEditor",
-          "group": "navigation@3"
-        },
-        {
-          "command": "sift.compareVersions",
-          "when": "sift.active && isInDiffEditor",
-          "group": "navigation@4"
-        },
-        {
-          "command": "sift.sendToClaude",
+          "command": "sift.askAi",
           "when": "sift.active && isInDiffEditor",
           "group": "navigation@0"
         },
         {
+          "command": "sift.previousFile",
+          "when": "sift.active && isInDiffEditor",
+          "group": "navigation@1"
+        },
+        {
+          "command": "sift.nextFile",
+          "when": "sift.active && isInDiffEditor",
+          "group": "navigation@2"
+        },
+        {
+          "command": "sift.markDone",
+          "when": "sift.active && isInDiffEditor && !sift.activeFileApproved",
+          "group": "navigation@3"
+        },
+        {
+          "command": "sift.unapproveFile",
+          "when": "sift.active && isInDiffEditor && sift.activeFileApproved",
+          "group": "navigation@3"
+        },
+        {
+          "command": "sift.nextTodo",
+          "when": "sift.active && isInDiffEditor",
+          "group": "sift@1"
+        },
+        {
           "command": "sift.toggleExplanations",
           "when": "sift.active && isInDiffEditor",
-          "group": "navigation@5"
+          "group": "sift@3"
+        },
+        {
+          "submenu": "sift.compareWith",
+          "when": "sift.active && isInDiffEditor",
+          "group": "navigation@4"
         }
       ],
       "commandPalette": [
@@ -404,25 +557,84 @@
         {
           "command": "sift.comment.delete",
           "when": "false"
+        },
+        {
+          "command": "sift.comment.edit",
+          "when": "false"
+        },
+        {
+          "command": "sift.comment.deleteMessage",
+          "when": "false"
+        },
+        {
+          "command": "sift.comment.saveEdit",
+          "when": "false"
+        },
+        {
+          "command": "sift.comment.cancelEdit",
+          "when": "false"
+        },
+        {
+          "command": "sift.comment.ask",
+          "when": "false"
+        },
+        {
+          "command": "sift.comment.askThread",
+          "when": "false"
+        },
+        {
+          "command": "sift.comment.cancelAsk",
+          "when": "false"
+        },
+        {
+          "command": "sift.diffRoundOn",
+          "when": "false"
+        },
+        {
+          "command": "sift.diffCumulativeOn",
+          "when": "false"
+        },
+        {
+          "command": "sift.comment.copy",
+          "when": "false"
+        },
+        {
+          "command": "sift.revealFile",
+          "when": "sift.active"
         }
       ],
       "comments/commentThread/context": [
         {
+          "command": "sift.comment.ask",
+          "group": "inline@1",
+          "when": "commentController == sift"
+        },
+        {
           "command": "sift.comment.create",
-          "group": "inline",
+          "group": "inline@2",
           "when": "commentController == sift && commentThreadIsEmpty"
         },
         {
           "command": "sift.comment.reply",
-          "group": "inline",
+          "group": "inline@2",
           "when": "commentController == sift && !commentThreadIsEmpty"
         }
       ],
       "comments/commentThread/title": [
         {
+          "command": "sift.comment.askThread",
+          "group": "inline@0",
+          "when": "commentController == sift && commentThread == comment-open"
+        },
+        {
+          "command": "sift.comment.cancelAsk",
+          "group": "inline@0",
+          "when": "commentController == sift && commentThread == comment-sent"
+        },
+        {
           "command": "sift.comment.resolve",
           "group": "inline@1",
-          "when": "commentController == sift && commentThread =~ /-(open|sent|answered)$/"
+          "when": "commentController == sift && commentThread =~ /-(open|answered)$/"
         },
         {
           "command": "sift.comment.reopen",
@@ -433,6 +645,94 @@
           "command": "sift.comment.delete",
           "group": "inline@2",
           "when": "commentController == sift && !commentThreadIsEmpty"
+        }
+      ],
+      "comments/comment/title": [
+        {
+          "command": "sift.comment.copy",
+          "group": "inline@0",
+          "when": "commentController == sift && comment =~ /^(own|ai)$/"
+        },
+        {
+          "command": "sift.comment.edit",
+          "group": "inline@1",
+          "when": "commentController == sift && comment == own"
+        },
+        {
+          "command": "sift.comment.deleteMessage",
+          "group": "inline@2",
+          "when": "commentController == sift && comment == own"
+        }
+      ],
+      "comments/comment/context": [
+        {
+          "command": "sift.comment.saveEdit",
+          "group": "inline@1",
+          "when": "commentController == sift"
+        },
+        {
+          "command": "sift.comment.cancelEdit",
+          "group": "inline@2",
+          "when": "commentController == sift"
+        }
+      ],
+      "sift.compareWith": [
+        {
+          "command": "sift.diffRound",
+          "when": "sift.diffMode != round",
+          "group": "1@1"
+        },
+        {
+          "command": "sift.diffRoundOn",
+          "when": "sift.diffMode == round",
+          "group": "1@1"
+        },
+        {
+          "command": "sift.diffCumulative",
+          "when": "sift.diffMode != cumulative",
+          "group": "1@2"
+        },
+        {
+          "command": "sift.diffCumulativeOn",
+          "when": "sift.diffMode == cumulative",
+          "group": "1@2"
+        },
+        {
+          "command": "sift.compareVersions",
+          "group": "2@1"
+        }
+      ],
+      "editor/title/context": [
+        {
+          "submenu": "sift.tab",
+          "when": "resourcePath in sift.reviewFiles",
+          "group": "sift@1"
+        }
+      ],
+      "sift.tab": [
+        {
+          "command": "sift.revealFile",
+          "group": "0@1"
+        },
+        {
+          "command": "sift.markDone",
+          "when": "resourcePath in sift.todoFiles || resourcePath in sift.inProgressFiles",
+          "group": "1@1"
+        },
+        {
+          "command": "sift.unapproveFile",
+          "when": "resourcePath in sift.doneFiles",
+          "group": "1@1"
+        },
+        {
+          "command": "sift.markInProgress",
+          "when": "resourcePath in sift.todoFiles || resourcePath in sift.inProgressFiles || resourcePath in sift.doneFiles",
+          "group": "1@2"
+        },
+        {
+          "command": "sift.markTodo",
+          "when": "resourcePath in sift.todoFiles || resourcePath in sift.inProgressFiles || resourcePath in sift.doneFiles",
+          "group": "1@3"
         }
       ]
     },
@@ -462,10 +762,22 @@
         "when": "sift.active"
       },
       {
-        "command": "sift.sendToClaude",
+        "command": "sift.askAi",
         "key": "ctrl+alt+enter",
         "mac": "cmd+alt+enter",
         "when": "sift.active && !commentEditorFocused"
+      },
+      {
+        "command": "editor.action.submitComment",
+        "key": "ctrl+enter",
+        "mac": "cmd+enter",
+        "when": "commentEditorFocused"
+      },
+      {
+        "command": "workbench.view.extension.sift",
+        "key": "ctrl+shift+z",
+        "mac": "cmd+shift+z",
+        "when": "!textInputFocus"
       }
     ],
     "configuration": {
@@ -490,13 +802,70 @@
           "minimum": 0,
           "description": "New (untracked) files larger than this are left out of snapshots."
         },
-        "sift.mcpPort": {
-          "type": "number",
-          "default": 47821,
-          "description": "Port of the local MCP server Claude Code connects to (127.0.0.1 only). Use a different port per open window."
+        "sift.ai.provider": {
+          "type": "string",
+          "enum": [
+            "claude-code",
+            "vscode-lm",
+            "command"
+          ],
+          "enumDescriptions": [
+            "Claude Code: the binary of the Claude Code VS Code extension, or `claude` from your shell. Uses your Claude login.",
+            "A chat model registered in VS Code (GitHub Copilot, or any extension that provides models). See sift.ai.languageModel.",
+            "Any command line tool that reads the prompt on stdin and prints the answer. See sift.ai.command."
+          ],
+          "default": "claude-code",
+          "description": "Which AI Sift asks. Run \"Sift: Choose AI…\" to pick from what is available."
+        },
+        "sift.ai.claudeCodeModel": {
+          "type": "string",
+          "default": "",
+          "description": "Model for Claude Code, e.g. opus, sonnet, haiku. Empty: Claude Code's default."
+        },
+        "sift.ai.claudeCodePath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the claude binary. Empty: the one bundled with the Claude Code extension, else `claude` from your shell."
+        },
+        "sift.ai.claudeCodeAdditionalDirectories": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "markdownDescription": "Folders outside the repository Claude Code may read, e.g. `~/code` for sibling worktrees. Without them, reads outside the repository are denied."
+        },
+        "sift.ai.claudeCodeAllowedTools": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "markdownDescription": "Extra tools Claude Code may use without asking, e.g. `WebFetch`, `mcp__claude_ai_Atlassian` (every tool of that MCP server) or `mcp__claude_ai_Atlassian__getJiraIssue`. Naming an MCP tool loads your MCP servers, which makes each call slower. A one-shot run cannot ask for permission, so tools that are not listed are denied."
+        },
+        "sift.ai.languageModel": {
+          "type": "string",
+          "default": "",
+          "description": "Id of the VS Code language model (provider vscode-lm). Empty: the first available."
+        },
+        "sift.ai.command": {
+          "type": "string",
+          "default": "",
+          "description": "Command for provider \"command\", run in your login shell at the repo root. It gets the prompt on stdin and must print a JSON answer, e.g. `codex exec -`."
         }
       }
-    }
+    },
+    "submenus": [
+      {
+        "id": "sift.compareWith",
+        "label": "Compare with",
+        "icon": "$(versions)"
+      },
+      {
+        "id": "sift.tab",
+        "label": "Sift"
+      }
+    ]
   },
   "scripts": {
     "build": "node build.mjs",
@@ -512,10 +881,6 @@
     "esbuild": "^0.24.0",
     "typescript": "^5.6.0",
     "vitest": "^2.1.0"
-  },
-  "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.32.2",
-    "zod": "^4.6.7"
   },
   "author": "Matheus Salmi",
   "repository": {

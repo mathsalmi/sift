@@ -1,9 +1,9 @@
 import type { FileChange } from '../git/changes';
 import type {
+  CommitReviewStatus,
   FileStatus,
   Iteration,
   MessageAuthor,
-  PendingApproval,
   PlanCommit,
   PlanInput,
   ReviewFile,
@@ -19,6 +19,7 @@ export interface NewThread {
   lineText: string;
   body: string;
   author: MessageAuthor;
+  model?: string;
 }
 
 export interface Progress {
@@ -50,9 +51,7 @@ export class ReviewModel {
         currentCommitId: null,
         status: 'active',
         createdAt: now,
-        turn: 'user',
-        showExplanations: false,
-        pendingApproval: null,
+        showExplanations: true,
       },
       commits: [],
       files: changes.map((change) => newFile(change)),
@@ -117,6 +116,30 @@ export class ReviewModel {
     return later ?? files[0];
   }
 
+  /** All files approved → approved; some → in progress; none → to do. */
+  commitReviewStatus(commitId: string): CommitReviewStatus {
+    if (this.getCommit(commitId).status === 'committed') {
+      return 'committed';
+    }
+    const files = this.filesOf(commitId);
+    const approved = files.filter((f) => f.status === 'done').length;
+    if (files.length > 0 && approved === files.length) {
+      return 'approved';
+    }
+    return approved > 0 ? 'in-progress' : 'todo';
+  }
+
+  /** The file before/after `filePath` in its commit (or in Unassigned), without wrapping. */
+  adjacentFile(filePath: string, delta: -1 | 1): ReviewFile | null {
+    const file = this.findFile(filePath);
+    if (!file) {
+      return null;
+    }
+    const files = this.filesOf(file.commitId);
+    const index = files.findIndex((f) => f.path === filePath);
+    return files[index + delta] ?? null;
+  }
+
   progress(): Progress {
     const commits = this.commitsInOrder();
     const current = this.state.session.currentCommitId;
@@ -146,7 +169,7 @@ export class ReviewModel {
     }
     const pending = files.filter((f) => f.status !== 'done').length;
     if (pending > 0) {
-      return `${pending} file(s) in this commit are not marked done.`;
+      return `${pending} file(s) in this commit are not approved yet.`;
     }
     return null;
   }
@@ -189,7 +212,7 @@ export class ReviewModel {
 
   // ---- plan ----
 
-  /** With `requireAll`, every pending file must be in the plan (used for plans coming from Claude). */
+  /** With `requireAll`, every pending file must be in the plan (used for plans coming from the AI). */
   applyPlan(plan: PlanInput, requireAll = false): { unassigned: number } {
     if (!plan || !Array.isArray(plan.commits)) {
       throw new Error('Plan must have a "commits" array.');
@@ -216,6 +239,17 @@ export class ReviewModel {
         }
         seen.add(filePath);
       }
+      for (const note of commit.explanations ?? []) {
+        if (!commit.files.includes(note?.path)) {
+          throw new Error(`Plan commit #${index + 1} explains "${note?.path}", which is not one of its files.`);
+        }
+        if (!Number.isInteger(note.line) || note.line < 1) {
+          throw new Error(`Explanation on "${note.path}" needs a 1-based "line".`);
+        }
+        if (typeof note.body !== 'string' || !note.body.trim()) {
+          throw new Error(`Explanation on "${note.path}" line ${note.line} has no "body".`);
+        }
+      }
     });
 
     if (requireAll) {
@@ -226,7 +260,8 @@ export class ReviewModel {
     }
 
     const committed = this.state.commits.filter((c) => c.status === 'committed');
-    this.state.commits = committed;
+    const committedIds = new Set(committed.map((c) => c.id));
+    this.state.commits = [...committed];
     for (const file of this.state.files) {
       if (!this.isCommittedFile(file)) {
         file.commitId = null;
@@ -245,6 +280,17 @@ export class ReviewModel {
         }
       }
     }
+
+    // Explanations of the old plan go away (the new plan brings its own); the user's comments follow their file.
+    this.state.threads = this.state.threads.filter(
+      (t) => (t.commitId !== null && committedIds.has(t.commitId)) || t.kind === 'comment',
+    );
+    for (const thread of this.state.threads) {
+      if (thread.commitId === null || !committedIds.has(thread.commitId)) {
+        thread.commitId = this.findFile(thread.path)?.commitId ?? null;
+      }
+    }
+    this.threadsRevision++;
 
     return { unassigned: this.filesOf(null).length };
   }
@@ -316,7 +362,6 @@ export class ReviewModel {
     }
     commit.status = 'in-review';
     this.state.session.currentCommitId = commitId;
-    this.state.session.turn = 'user';
     this.threadsRevision++;
   }
 
@@ -378,19 +423,11 @@ export class ReviewModel {
 
     const next = this.commitsInOrder().find((c) => c.status !== 'committed') ?? null;
     this.state.session.currentCommitId = null;
-    this.state.session.turn = 'user';
-    this.state.session.pendingApproval = { commitId, sha, nextCommitId: next?.id ?? null };
     if (!next && this.filesOf(null).length === 0) {
       this.state.session.status = 'done';
     }
     this.threadsRevision++;
     return next;
-  }
-
-  takePendingApproval(): PendingApproval | null {
-    const pending = this.state.session.pendingApproval;
-    this.state.session.pendingApproval = null;
-    return pending;
   }
 
   // ---- comment threads ----
@@ -407,8 +444,15 @@ export class ReviewModel {
     return this.state.threads.filter((t) => t.commitId === commitId);
   }
 
-  sentThreads(commitId: string): ReviewThread[] {
-    return this.threadsOf(commitId).filter((t) => t.status === 'sent');
+  /** Comment threads on these files that are not resolved yet (explanations don't count). */
+  unresolvedComments(paths: string[]): ReviewThread[] {
+    const wanted = new Set(paths);
+    return this.state.threads.filter((t) => t.kind === 'comment' && t.status !== 'resolved' && wanted.has(t.path));
+  }
+
+  /** Threads the AI is working on. */
+  sentThreads(): ReviewThread[] {
+    return this.state.threads.filter((t) => t.status === 'sent');
   }
 
   addThread(input: NewThread, now: string): ReviewThread {
@@ -429,7 +473,7 @@ export class ReviewModel {
       line: input.line,
       lineText: input.lineText,
       status: input.kind === 'comment' ? 'open' : 'answered',
-      messages: [{ author: input.author, body: input.body.trim(), createdAt: now, iteration }],
+      messages: [{ author: input.author, body: input.body.trim(), createdAt: now, iteration, model: input.model }],
       createdAt: now,
     };
     this.state.threads.push(thread);
@@ -437,31 +481,38 @@ export class ReviewModel {
     return thread;
   }
 
-  /** Claude's note on a line: replaces an earlier explanation on the same line. */
-  setExplanation(path: string, line: number, lineText: string, body: string, now: string): ReviewThread {
+  /** The AI's note on a line: replaces an earlier explanation on the same line. */
+  setExplanation(path: string, line: number, lineText: string, body: string, now: string, model?: string): ReviewThread {
     const existing = this.state.threads.find(
       (t) => t.kind === 'explanation' && t.path === path && t.line === line && t.status !== 'resolved',
     );
     if (!existing) {
-      return this.addThread({ kind: 'explanation', path, line, lineText, body, author: 'claude' }, now);
+      return this.addThread({ kind: 'explanation', path, line, lineText, body, author: 'ai', model }, now);
     }
     const iteration = this.iterationFor(existing.commitId);
     existing.lineText = lineText;
-    existing.messages = [{ author: 'claude', body: body.trim(), createdAt: now, iteration }];
+    existing.messages = [{ author: 'ai', body: body.trim(), createdAt: now, iteration, model }];
     this.threadsRevision++;
     return existing;
   }
 
   /**
    * Adds a message. A user reply reopens the thread (and turns an explanation into a comment);
-   * a Claude reply answers it, or resolves it when asked.
+   * an AI reply answers it, or resolves it when asked.
    */
-  reply(threadId: string, author: MessageAuthor, body: string, resolve: boolean, now: string): ReviewThread {
+  reply(threadId: string, author: MessageAuthor, body: string, resolve: boolean, now: string, model?: string): ReviewThread {
     const thread = this.getThread(threadId);
     if (!body.trim()) {
       throw new Error('Reply cannot be empty.');
     }
-    thread.messages.push({ author, body: body.trim(), createdAt: now, iteration: this.iterationFor(thread.commitId) });
+    thread.messages.push({
+      author,
+      body: body.trim(),
+      createdAt: now,
+      iteration: this.iterationFor(thread.commitId),
+      model,
+    });
+    thread.error = undefined;
     if (author === 'user') {
       thread.kind = 'comment';
       thread.status = 'open';
@@ -478,32 +529,58 @@ export class ReviewModel {
     this.threadsRevision++;
   }
 
+  /** Edits one of the user's own messages. */
+  editMessage(threadId: string, index: number, body: string): void {
+    const message = this.userMessage(threadId, index);
+    if (!body.trim()) {
+      throw new Error('Comment cannot be empty.');
+    }
+    message.body = body.trim();
+    this.threadsRevision++;
+  }
+
+  /** Deletes one of the user's own messages; deleting the only message deletes the thread. */
+  deleteMessage(threadId: string, index: number): void {
+    const thread = this.getThread(threadId);
+    this.userMessage(threadId, index);
+    if (thread.messages.length === 1) {
+      this.deleteThread(threadId);
+      return;
+    }
+    thread.messages.splice(index, 1);
+    this.threadsRevision++;
+  }
+
   deleteThread(threadId: string): void {
     this.getThread(threadId);
     this.state.threads = this.state.threads.filter((t) => t.id !== threadId);
     this.threadsRevision++;
   }
 
-  /** Hands the open comments of the commit to Claude. Returns how many were sent. */
-  sendFeedback(commitId: string): number {
-    const open = this.threadsOf(commitId).filter((t) => t.kind === 'comment' && t.status === 'open');
+  /**
+   * Marks open comments as being answered by the AI: the given threads, or every open comment.
+   * Returns the threads it marked.
+   */
+  startAsking(threadIds?: string[]): ReviewThread[] {
+    const open = (threadIds ? threadIds.map((id) => this.getThread(id)) : this.state.threads).filter(
+      (t) => t.kind === 'comment' && t.status === 'open',
+    );
     if (open.length === 0) {
-      throw new Error('There are no open comments to send.');
+      throw new Error('There are no open comments to ask about.');
     }
     for (const thread of open) {
       thread.status = 'sent';
+      thread.error = undefined;
     }
-    this.state.session.turn = 'claude';
     this.threadsRevision++;
-    return open.length;
+    return open;
   }
 
-  /** Claude finished a round: back to the user. Sent threads Claude didn't reply to count as answered. */
-  finishClaudeTurn(commitId: string): void {
-    for (const thread of this.sentThreads(commitId)) {
-      thread.status = 'answered';
-    }
-    this.state.session.turn = 'user';
+  /** The AI request failed or was cancelled: the thread goes back to open with the reason. */
+  failAsking(threadId: string, error: string): void {
+    const thread = this.getThread(threadId);
+    thread.status = 'open';
+    thread.error = error;
     this.threadsRevision++;
   }
 
@@ -520,6 +597,17 @@ export class ReviewModel {
       throw new Error('Committed commits cannot be changed.');
     }
     return commit;
+  }
+
+  private userMessage(threadId: string, index: number) {
+    const message = this.getThread(threadId).messages[index];
+    if (!message) {
+      throw new Error('Unknown message.');
+    }
+    if (message.author !== 'user') {
+      throw new Error("Only your own messages can be changed. Delete the thread to remove the AI's.");
+    }
+    return message;
   }
 
   private isCommittedFile(file: ReviewFile): boolean {

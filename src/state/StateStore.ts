@@ -51,8 +51,28 @@ export async function excludeStateDir(gitDir: string): Promise<void> {
 /** Fills fields added after M1 so older state files keep loading. */
 function withDefaults(state: ReviewState): ReviewState {
   state.threads = state.threads ?? [];
-  state.session.turn = state.session.turn ?? 'user';
   state.session.showExplanations = state.session.showExplanations ?? false;
-  state.session.pendingApproval = state.session.pendingApproval ?? null;
+  // Before the AI became built in, its messages and rounds were Claude's, and a thread could wait on a Claude session.
+  const legacy = state as unknown as { session: Record<string, unknown> };
+  delete legacy.session.turn;
+  delete legacy.session.pendingApproval;
+  for (const iteration of state.iterations) {
+    if ((iteration.author as string) === 'claude') {
+      iteration.author = 'ai';
+    }
+  }
+  for (const thread of state.threads) {
+    delete (thread as { delivered?: boolean }).delivered;
+    for (const message of thread.messages) {
+      if ((message.author as string) === 'claude') {
+        message.author = 'ai';
+        message.model = message.model ?? 'Claude';
+      }
+    }
+    if (thread.status === 'sent') {
+      // Nothing is working on it after a restart.
+      thread.status = 'open';
+    }
+  }
   return state;
 }

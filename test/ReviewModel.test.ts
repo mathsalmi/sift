@@ -171,3 +171,103 @@ describe('commit editing', () => {
     expect(m.filesOf(null)).toHaveLength(3);
   });
 });
+
+describe('commit review status', () => {
+  it('is to do with no approved file, in progress with some, approved with all', () => {
+    const m = model();
+    m.applyPlan({ commits: [{ message: 'All', files: ['a.ts', 'b.ts'] }] });
+    const id = m.commitsInOrder()[0].id;
+
+    m.setStatus(['a.ts'], 'in-progress');
+    expect(m.commitReviewStatus(id)).toBe('todo');
+    m.setStatus(['a.ts'], 'done');
+    expect(m.commitReviewStatus(id)).toBe('in-progress');
+    m.setStatus(['b.ts'], 'done');
+    expect(m.commitReviewStatus(id)).toBe('approved');
+    m.markCommitted(id, 'sha1');
+    expect(m.commitReviewStatus(id)).toBe('committed');
+  });
+
+  it('steps to the previous and next file of the same commit without wrapping', () => {
+    const m = model();
+    m.applyPlan({ commits: [{ message: 'All', files: ['a.ts', 'b.ts', 'c.ts'] }] });
+
+    expect(m.adjacentFile('b.ts', 1)?.path).toBe('c.ts');
+    expect(m.adjacentFile('b.ts', -1)?.path).toBe('a.ts');
+    expect(m.adjacentFile('c.ts', 1)).toBeNull();
+    expect(m.adjacentFile('a.ts', -1)).toBeNull();
+  });
+});
+
+describe('plan explanations', () => {
+  it('rejects explanations on files outside the commit or without a line', () => {
+    const m = model();
+    expect(() =>
+      m.applyPlan({ commits: [{ message: 'X', files: ['a.ts'], explanations: [{ path: 'b.ts', line: 1, body: 'x' }] }] }),
+    ).toThrow(/not one of its files/);
+    expect(() =>
+      m.applyPlan({ commits: [{ message: 'X', files: ['a.ts'], explanations: [{ path: 'a.ts', line: 0, body: 'x' }] }] }),
+    ).toThrow(/1-based/);
+  });
+
+  it('a new plan drops old explanations and moves comments to their file\'s new commit', () => {
+    const m = model();
+    m.applyPlan({ commits: [{ message: 'One', files: ['a.ts', 'b.ts'] }] });
+    m.setExplanation('a.ts', 0, 'x', 'Why', 'now');
+    const comment = m.addThread({ kind: 'comment', path: 'b.ts', line: 0, lineText: 'y', body: 'Hm?', author: 'user' }, 'now');
+
+    m.applyPlan({ commits: [{ message: 'A', files: ['a.ts'] }, { message: 'B', files: ['b.ts'] }] });
+
+    expect(m.state.threads.map((t) => t.id)).toEqual([comment.id]);
+    expect(m.getThread(comment.id).commitId).toBe(m.commitsInOrder()[1].id);
+  });
+});
+
+describe('comment threads', () => {
+  it('edits and deletes the user\'s own messages, never Claude\'s', () => {
+    const m = model();
+    const t = m.addThread({ kind: 'comment', path: 'a.ts', line: 0, lineText: 'x', body: 'First', author: 'user' }, 'now');
+    m.reply(t.id, 'ai', 'Answer', false, 'now', 'Claude');
+    m.reply(t.id, 'user', 'Second', false, 'now');
+
+    m.editMessage(t.id, 2, 'Second, edited');
+    expect(m.getThread(t.id).messages[2].body).toBe('Second, edited');
+    expect(() => m.editMessage(t.id, 1, 'x')).toThrow(/own messages/);
+
+    m.deleteMessage(t.id, 2);
+    expect(m.getThread(t.id).messages.map((x) => x.body)).toEqual(['First', 'Answer']);
+
+    const lone = m.addThread({ kind: 'comment', path: 'a.ts', line: 3, lineText: 'x', body: 'Only', author: 'user' }, 'now');
+    m.deleteMessage(lone.id, 0);
+    expect(() => m.getThread(lone.id)).toThrow(/Unknown thread/);
+  });
+
+  it('lists unresolved comments of files, ignoring explanations and resolved threads', () => {
+    const m = model();
+    const open = m.addThread({ kind: 'comment', path: 'a.ts', line: 0, lineText: 'x', body: 'Why?', author: 'user' }, 'now');
+    const done = m.addThread({ kind: 'comment', path: 'a.ts', line: 1, lineText: 'y', body: 'Ok', author: 'user' }, 'now');
+    m.setThreadResolved(done.id, true);
+    m.setExplanation('a.ts', 2, 'z', 'Because', 'now');
+    m.addThread({ kind: 'comment', path: 'b.ts', line: 0, lineText: 'x', body: 'Hm', author: 'user' }, 'now');
+
+    expect(m.unresolvedComments(['a.ts']).map((t) => t.id)).toEqual([open.id]);
+    expect(m.unresolvedComments(['c.ts'])).toEqual([]);
+  });
+
+  it('marks open comments as being answered, and back to open with the reason on failure', () => {
+    const m = model();
+    const one = m.addThread({ kind: 'comment', path: 'a.ts', line: 0, lineText: 'x', body: 'Why?', author: 'user' }, 'now');
+    m.setExplanation('b.ts', 0, 'y', 'Because', 'now');
+
+    expect(m.startAsking().map((t) => t.id)).toEqual([one.id]);
+    expect(m.sentThreads().map((t) => t.id)).toEqual([one.id]);
+    expect(() => m.startAsking()).toThrow(/no open comments/);
+
+    m.failAsking(one.id, 'timeout');
+    expect(m.getThread(one.id)).toMatchObject({ status: 'open', error: 'timeout' });
+
+    m.reply(one.id, 'ai', 'Here is why.', false, 'now', 'GPT');
+    expect(m.getThread(one.id)).toMatchObject({ status: 'answered', error: undefined });
+    expect(m.getThread(one.id).messages[1]).toMatchObject({ author: 'ai', model: 'GPT' });
+  });
+});

@@ -1,17 +1,13 @@
 export type FileStatus = 'todo' | 'in-progress' | 'done';
 export type CommitStatus = 'planned' | 'in-review' | 'committed';
+/** Derived from the files: none approved, some approved, all approved; or already committed. */
+export type CommitReviewStatus = 'todo' | 'in-progress' | 'approved' | 'committed';
 export type ChangeType = 'added' | 'modified' | 'deleted';
-export type IterationAuthor = 'initial' | 'claude' | 'user';
-export type Turn = 'user' | 'claude';
+export type IterationAuthor = 'initial' | 'ai' | 'user';
 export type ThreadKind = 'comment' | 'explanation';
+/** sent = the AI is working on it. */
 export type ThreadStatus = 'open' | 'sent' | 'answered' | 'resolved';
-export type MessageAuthor = 'user' | 'claude';
-
-export interface PendingApproval {
-  commitId: string;
-  sha: string;
-  nextCommitId: string | null;
-}
+export type MessageAuthor = 'user' | 'ai';
 
 export interface Session {
   id: string;
@@ -22,11 +18,9 @@ export interface Session {
   currentCommitId: string | null;
   status: 'active' | 'done';
   createdAt: string;
-  /** Whose move it is in the review loop. */
-  turn: Turn;
   showExplanations: boolean;
-  /** Set when the user approves a commit; delivered to Claude by review_wait_for_feedback. */
-  pendingApproval: PendingApproval | null;
+  /** Hash of the .sift/plan.json content last applied or dismissed, so a plan file is picked up once. */
+  planFileHash?: string;
 }
 
 export interface PlanCommit {
@@ -67,6 +61,8 @@ export interface ThreadMessage {
   body: string;
   createdAt: string;
   iteration: number;
+  /** Name of the model that wrote an AI message. */
+  model?: string;
 }
 
 export interface ReviewThread {
@@ -83,6 +79,8 @@ export interface ReviewThread {
   status: ThreadStatus;
   messages: ThreadMessage[];
   createdAt: string;
+  /** Why the last AI request on this thread failed. */
+  error?: string;
 }
 
 export interface ReviewState {
@@ -94,12 +92,21 @@ export interface ReviewState {
   threads: ReviewThread[];
 }
 
-/** Shape of .sift/plan.json, written by Claude or by hand. */
+/** The AI's note on a line, shipped with the plan. */
+export interface PlanExplanation {
+  path: string;
+  /** 1-based line in the current file. */
+  line: number;
+  body: string;
+}
+
+/** Shape of a plan: from the AI, or .sift/plan.json written by hand. */
 export interface PlanInput {
   commits: Array<{
     message: string;
     intent?: string;
     riskNotes?: string[];
     files: string[];
+    explanations?: PlanExplanation[];
   }>;
 }

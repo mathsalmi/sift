@@ -1,28 +1,37 @@
 # Sift
 
-**Sift a large AI-made change set into reviewed, atomic commits — one commit at a time, with Claude in the review loop.**
+**Sift a large change set into reviewed, atomic commits, and ask the AI of your choice about any line.**
 
-When Claude changes hundreds of files in one task, reviewing a single giant diff doesn't work, and committing it as one blob loses history. Sift lets Claude propose a plan of atomic commits, then walks you through each commit in VS Code's native diff editor. You comment inline, Claude fixes and replies, and you see only what changed since the last round. When the commit is right, you approve it and Sift commits exactly those files.
+When an AI (or you) changes hundreds of files in one go, reviewing a single giant diff doesn't work, and committing it as one blob loses history. Sift asks an AI to split the changes into a plan of atomic commits, with notes on the lines that matter, then walks you through each commit in VS Code's native diff editor. Comment on any line to ask a question or ask for a change, and the answer lands in the same thread. When a commit is right, you approve it and Sift commits exactly those files.
 
 > Status: early (0.3.0). Used daily by its author; not on the Marketplace yet.
 
 ## Features
 
-- **Commit plan:** Claude (or you) groups every changed file into ordered, atomic commits. Drag files between commits.
+- **AI commit plan:** one click groups every changed file into ordered, atomic commits, with an intent, risk notes and explanations on the lines that matter. Drag files between commits to adjust.
+- **Ask about any line:** in a comment, ask a question (the AI answers in the thread) or give a direction (the AI edits the code and says what it changed). Markdown works, **Cmd+Enter** sends, and the thread shows *Thinking…* while the AI works. Edit or delete your own comments.
+- **Your choice of AI:** Claude Code (uses your Claude login, e.g. through the Claude Code extension), any model VS Code exposes (GitHub Copilot or other extensions), or any command line tool.
 - **Review rounds with snapshots:** each round is frozen as v0, v1, v2…, so you can diff:
   - **This round:** previous version ↔ working tree, i.e. only the latest fixes.
   - **Cumulative:** HEAD ↔ working tree, i.e. what will be committed.
-  - **Any two versions,** e.g. v0 ↔ v3.
+  - **Any version ↔ now,** e.g. v1 ↔ working tree.
+
+  Pick one with the **Compare with** dropdown in the diff editor title.
 - **Native VS Code:** real diff editor, inline comment threads, go-to-definition and editing inside the diff all keep working.
-- **Claude in the loop:** comment, press **Send to Claude**, and Claude applies each thread, replies in it, and hands the turn back.
-- **Review status:** To do / In progress / Done per file, saved to disk. Files that change after you marked them done go back to In progress.
-- **You stay in control:** Claude can't stage, commit or mark anything reviewed. Only your Approve click commits, with your git identity and hooks.
+- **Files as a list or a tree:** switch with the list/tree button in the view title, like the Source Control view. Collapse or expand everything with the button next to it.
+- **Review status:** tick a file's checkbox to approve it. Sift asks first when the file still has unresolved comments. A commit is **To do** until one file is approved, **In progress** while some are, and **Approved** when all are. Files that change after you approved them go back to In progress.
+- **You stay in control:** the AI never stages or commits. Only your Approve click commits, with your git identity and hooks.
 
 ## Requirements
 
 - VS Code 1.95 or later
 - Git
-- [Claude Code](https://claude.com/claude-code) (CLI or VS Code extension), for the Claude loop. Sift also works on its own for manual reviews.
+- An AI, any of:
+  - [Claude Code](https://claude.com/claude-code): the VS Code extension or the CLI. Sift finds the extension's bundled `claude` binary by itself.
+  - A VS Code language model, e.g. from GitHub Copilot Chat.
+  - A command line tool that reads a prompt on stdin, e.g. `codex exec -`, `gemini -p`, `llm`.
+
+Sift also works without AI for manual reviews.
 
 ## Install
 
@@ -33,7 +42,7 @@ git clone https://github.com/mathsalmi/sift.git
 cd sift
 npm install
 npm run package
-code --install-extension sift-0.3.0.vsix
+code --install-extension sift-0.3.0.vsix --force
 ```
 
 Then run **Developer: Reload Window**.
@@ -41,52 +50,30 @@ Then run **Developer: Reload Window**.
 ## Quick start
 
 1. Open a repo with uncommitted changes and click the **Sift** icon in the activity bar.
-2. Click **Start review**. All changed files land in **Unassigned**.
-3. Connect Claude, once per repo: in the **…** menu, run **Set up Claude Code (MCP)**, then restart Claude Code.
-4. In Claude Code, run **`/sift`**. Claude plans the commits, starts the first one, adds explanations and waits for you.
-5. For each file in the commit:
-   - Read the diff.
-   - Comment with **+** in the gutter.
-   - Mark it reviewed with **Cmd+Alt+D**.
-6. Press **Cmd+Alt+Enter** (Send to Claude). Claude fixes, replies, and the next round is ready.
-7. When the commit is right, click **Approve and commit**. Claude moves on to the next commit.
-8. When every commit is done, push.
+2. Click **Plan commits with AI** (✨). The plan appears in the Sift view, with explanations on the changed lines. To pick another AI, use **Choose AI…** in the **…** menu.
+3. Click a file of the first commit: that commit goes into review. In the diff editor, step through its files with **←** / **→**.
+4. On any line, click **+** in the gutter and write a question or a direction:
+   - **Ask AI** sends it now; the answer appears in the thread (stop it with ⏹).
+   - **Add (ask later)** queues it; ask about all queued comments with ✨ in the editor title (**Cmd+Alt+Enter**).
+5. Approve each file: tick its checkbox in the tree, or click **✓** in the diff editor (**Cmd+Alt+D**).
+6. When the commit is approved, click **Approve and commit**. The next commit goes into review.
+7. When every commit is done, push.
 
 Safety tip: create a backup branch before a big review: `git branch backup/$(date +%Y%m%d-%H%M)`.
 
-## Connecting Claude Code
+## Choosing the AI
 
-**Set up Claude Code (MCP)** does three things and reports each one:
+Run **Sift: Choose AI…**. It lists what is available here and saves your choice in your user settings:
 
-1. Registers this window's MCP server for the repo: `claude mcp add --scope local …`. Nothing is added to the repo.
-2. Installs the `/sift` command at `~/.claude/commands/sift.md`.
-3. Sets `env.MCP_TOOL_TIMEOUT` in `~/.claude/settings.json`, only if you haven't set it, so Claude can wait for your review. This works in both the terminal and the VS Code panel.
-
-Notes:
-
-- Setup needs the `claude` CLI in your login shell. If it's missing, the error dialog offers to copy the command so you can run it yourself.
-- If `/sift` isn't found, use `/mcp__sift__start`. It comes straight from the MCP server.
-- The MCP server listens on `127.0.0.1` only, uses a per-repo bearer token, and runs while the VS Code window is open.
-
-### MCP tools
-
-| Tool | What it does |
+| Provider | How Sift calls it |
 | --- | --- |
-| `review_get_status` | Session, plan, commit in review, whose turn, and the next step |
-| `review_get_changes` | Changed files with commit and review status |
-| `review_set_plan` | Replace the pending plan; every pending file exactly once |
-| `review_assign_files` | Move files between commits (after the user agrees) |
-| `review_start_commit` | Put a commit into review (snapshot v0) |
-| `review_explain` | Claude's note on a line; replaces an earlier note on that line |
-| `review_wait_for_feedback` | Blocks until Send to Claude (`feedback`) or Approve (`approved`); `none` on timeout |
-| `review_get_feedback` | Same, without waiting |
-| `review_reply` | Reply in a thread; optionally resolve it |
-| `review_mark_ready` | Snapshot the round, show the summary, hand the turn back |
-| `review_commit_done` | Acknowledge an approval; returns the next commit or `done` |
+| **Claude Code** | Runs `claude -p` with read-only tools and a JSON schema. Uses the binary bundled with the Claude Code VS Code extension, else `claude` from your login shell. Pick the default model, opus, sonnet or haiku. |
+| **VS Code language models** | Any model registered in VS Code, e.g. by GitHub Copilot Chat. VS Code asks you once to allow Sift to use it. |
+| **Command line tool** | Any command, run in your login shell at the repo root. It gets the prompt on stdin and must print an answer containing the JSON. |
 
 ## Plan file
 
-Without Claude, write `.sift/plan.json` and click **Load plan**:
+Sift also picks up `.sift/plan.json` whenever it is written, by hand or by another tool. With no session it starts one; if it would replace a plan under review, Sift asks first.
 
 ```json
 {
@@ -95,55 +82,71 @@ Without Claude, write `.sift/plan.json` and click **Load plan**:
       "message": "Add snapshot service",
       "intent": "Freeze the working tree per review round without touching the index.",
       "riskNotes": ["Uses a private GIT_INDEX_FILE"],
-      "files": ["src/git/SnapshotService.ts", "test/git.test.ts"]
+      "files": ["src/git/SnapshotService.ts", "test/git.test.ts"],
+      "explanations": [
+        { "path": "src/git/SnapshotService.ts", "line": 42, "body": "Writes the tree with a private index so the staging area is untouched." }
+      ]
     }
   ]
 }
 ```
 
-- Every path must be a changed file, listed once.
-- Unlisted files stay in **Unassigned**.
+- Every path must be a changed file, listed once. Unlisted files stay in **Unassigned**.
+- `explanations` are optional; each `path` must be one of the commit's files, `line` is 1-based.
 - A new plan replaces commits that aren't committed yet.
 
 ## Commands and keys
 
 | Command | Mac | Windows / Linux |
 | --- | --- | --- |
-| Send to Claude | Cmd+Alt+Enter | Ctrl+Alt+Enter |
-| Mark reviewed (done) | Cmd+Alt+D | Ctrl+Alt+D |
+| Ask AI about all open comments | Cmd+Alt+Enter | Ctrl+Alt+Enter |
+| Approve file | Cmd+Alt+D | Ctrl+Alt+D |
 | Mark to do | Cmd+Alt+U | Ctrl+Alt+U |
 | Next to do | Cmd+Alt+N | Ctrl+Alt+N |
 | Toggle diff mode | Cmd+Alt+M | Ctrl+Alt+M |
+| Send a comment (Ask AI) | Cmd+Enter | Ctrl+Enter |
+| Open the Sift view (outside text fields; there it stays Redo) | Cmd+Shift+Z | Ctrl+Shift+Z |
 
-Also in the Sift view and command palette: Start review · Load plan · New commit · Start reviewing this commit · Take snapshot · Compare versions… · Show / hide Claude's explanations · Move to commit… · Approve and commit · Set up Claude Code (MCP) · Copy prompt for Claude · Refresh changes · Abort session.
+Diff editor buttons: Ask AI · Previous / next file in the commit · Approve / unapprove file · Compare with (previous version, last commit, or a specific version); and in its **…** menu: Next to do · Show / hide AI explanations.
+
+Right-click a commit for: Approve and commit · Review this commit · Edit message · Move up / down · Delete. Right-click a file for: Approve / unapprove · Mark in progress / to do · Move to commit…. Right-click an editor tab of a review file for **Sift**: Show in Sift sidebar · Approve / unapprove · Mark in progress · Mark to do.
+
+Also in the Sift view and command palette: Plan commits with AI · Choose AI… · Start review · Load plan · New commit · Take snapshot · Refresh changes · View as tree / list · Collapse / expand all · Start over….
 
 ## Settings
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
+| `sift.ai.provider` | `claude-code` | `claude-code`, `vscode-lm` or `command`. Easiest to set with **Choose AI…** |
+| `sift.ai.claudeCodeModel` | empty | Claude Code model, e.g. `opus`, `sonnet`, `haiku`; empty for its default |
+| `sift.ai.claudeCodePath` | empty | Path to `claude`; empty to use the Claude Code extension's binary or your shell's |
+| `sift.ai.claudeCodeAdditionalDirectories` | `[]` | Folders outside the repo Claude Code may read, e.g. `~/code` for sibling worktrees |
+| `sift.ai.claudeCodeAllowedTools` | `[]` | Extra tools Claude Code may use, e.g. `WebFetch` or `mcp__claude_ai_Atlassian` (all tools of that MCP server). Naming an MCP tool loads your MCP servers, which makes calls slower |
+| `sift.ai.languageModel` | empty | VS Code language model id; empty for the first available |
+| `sift.ai.command` | empty | Command for the `command` provider |
 | `sift.stateLocation` | `repo` | `repo`: `.sift/state.json`, excluded via `.git/info/exclude`. `workspaceStorage`: outside the repo. |
 | `sift.snapshotMaxFileSizeMB` | `5` | New files larger than this are left out of snapshots |
-| `sift.mcpPort` | `47821` | Local MCP server port; use a different one per open window, then rerun setup |
 
 ## How it works
 
 - **Snapshots:** git trees built with a private index (`.git/sift/index`) and kept under `refs/sift/<session>/<commit>/v<N>`. Your real index isn't touched until you approve.
+- **AI calls:** Sift sends the prompt (numbered diffs, the file, the thread) to the chosen AI and asks for JSON. Claude Code runs with read-only tools (`Read`, `Grep`, `Glob`) inside the repo, and no MCP servers or slash commands. A one-shot run cannot ask for permission, so anything else is denied unless you allow it with `sift.ai.claudeCodeAdditionalDirectories` or `sift.ai.claudeCodeAllowedTools`. Code changes come back as search/replace edits; Sift applies all of them or none, only inside the repo, then takes a new snapshot so "this round" shows exactly what the AI changed.
 - **Comments:** stored in the state file and anchored by line text, so they follow code that moves. A thread whose line is gone shows as outdated.
 - **Approve:** refuses if the index already has staged changes or HEAD moved outside Sift. Run **Refresh changes** to accept the new HEAD.
-- **Abort:** deletes the review state and snapshot refs. Your files and commits are untouched.
+- **Start over:** deletes the review state and snapshot refs. Your files and commits are untouched.
 
 ## Limitations and roadmap
 
 - **Whole files per commit.** Splitting one file's hunks across commits is next (M3).
 - **Renames** show as delete + add.
-- **One window per port** for the MCP server.
+- **AI edits are plain file writes**, not editor undo steps. Use the "this round" diff or git to review or revert them.
 - **Planned:** reviewing an already-committed range (rebase mode).
 
 ## Development
 
 ```bash
 npm install
-npm test            # model, git, controller and MCP loop tests against temp git repos
+npm test            # model, git, controller and AI service tests against temp git repos
 npm run build       # bundles dist/extension.js
 npm run watch       # rebuild on change
 npm run package     # typecheck, production build, .vsix
@@ -153,15 +156,13 @@ Press **F5** in VS Code to run the extension in an Extension Development Host. P
 
 ```text
 src/
-  extension.ts            activation, commands, file watcher, MCP startup
-  claudeSetup.ts          one-click Claude Code setup
-  controller/             ReviewController: single owner of state, feedback waiters
+  extension.ts            activation, commands, file watchers
+  ai/                     AiService (plan, answer threads, apply edits), prompts, providers
+  controller/             ReviewController: single owner of state
   core/                   ReviewModel (pure rules), anchors, types
   git/                    GitRunner, changes + commit, SnapshotService
-  mcp/                    tools (what Claude can do) and the HTTP server
   state/                  StateStore (atomic JSON)
   ui/                     trees, comments, status bar, snapshot URIs
-resources/sift.md         the /sift slash command
 test/                     vitest suites
 ```
 

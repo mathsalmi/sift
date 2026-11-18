@@ -54,7 +54,7 @@
       },
       {
         "command": "sift.refresh",
-        "title": "Refresh changes",
+        "title": "Refresh",
         "category": "Sift",
         "icon": "$(refresh)"
       },

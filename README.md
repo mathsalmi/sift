@@ -111,7 +111,7 @@ Diff editor buttons: Ask AI · Previous / next file in the commit · Approve / u
 
 Right-click a commit for: Approve and commit · Review this commit · Edit message · Move up / down · Delete. Right-click a file for: Approve / unapprove · Mark in progress / to do · Add to .gitignore · Exclude locally (.git/info/exclude) · Move to commit…. Right-click an editor tab of a review file for **Sift**: Show in Sift sidebar · Approve / unapprove · Mark in progress · Mark to do · Add to .gitignore · Exclude locally.
 
-Also in the Sift view and command palette: Plan commits with AI · Choose AI… · Start review · Load plan · New commit · Take snapshot · Refresh changes · View as tree / list · Collapse / expand all · Start over….
+Also in the Sift view and command palette: Plan commits with AI · Choose AI… · Start review · Load plan · New commit · Take snapshot · Refresh (re-reads git and the saved state) · View as tree / list · Collapse / expand all · Start over….
 
 ## Settings
 
@@ -132,7 +132,7 @@ Also in the Sift view and command palette: Plan commits with AI · Choose AI… 
 - **Snapshots:** git trees built with a private index (`.git/sift/index`) and kept under `refs/sift/<session>/<commit>/v<N>`. Your real index isn't touched until you approve.
 - **AI calls:** Sift sends the prompt (numbered diffs, the file, the thread) to the chosen AI and asks for JSON. Claude Code runs with read-only tools (`Read`, `Grep`, `Glob`) inside the repo, and no MCP servers or slash commands. A one-shot run cannot ask for permission, so anything else is denied unless you allow it with `sift.ai.claudeCodeAdditionalDirectories` or `sift.ai.claudeCodeAllowedTools`. Code changes come back as search/replace edits; Sift applies all of them or none, only inside the repo, then takes a new snapshot so "this round" shows exactly what the AI changed.
 - **Comments:** stored in the state file and anchored by line text, so they follow code that moves. A thread whose line is gone shows as outdated.
-- **Approve:** refuses if the index already has staged changes or HEAD moved outside Sift. Run **Refresh changes** to accept the new HEAD.
+- **Approve:** refuses if the index already has staged changes or HEAD moved outside Sift. Run **Refresh** to accept the new HEAD.
 - **Commits made outside Sift** (terminal, Source Control view) are picked up as they happen, and when VS Code starts. A planned commit whose files were all committed is marked committed, matched by subject when possible; one whose files were all reverted leaves the plan. Commits you created empty are left alone.
 - **Start over:** deletes the review state and snapshot refs. Your files and commits are untouched.
 

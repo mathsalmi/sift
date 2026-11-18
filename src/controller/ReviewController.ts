@@ -62,6 +62,17 @@ export class ReviewController implements vscode.Disposable {
     await this.fire();
   }
 
+  /** Picks up the saved state when something outside this window changed it. Returns true when it did. */
+  async reloadState(): Promise<boolean> {
+    const state = await this.store.loadIfChanged();
+    if (state === undefined) {
+      return false;
+    }
+    this.model = state ? new ReviewModel(state) : null;
+    await this.fire();
+    return true;
+  }
+
   // ---- session ----
 
   /** Starts a session from the uncommitted changes when there is none yet. Returns true when it started one. */
@@ -270,7 +281,7 @@ export class ReviewController implements vscode.Disposable {
     }
     const head = await currentHead(this.git);
     if (head !== model.state.session.lastHead) {
-      throw new Error('HEAD moved outside Sift. Run "Refresh changes" to re-sync, then approve again.');
+      throw new Error('HEAD moved outside Sift. Run "Refresh" to re-sync, then approve again.');
     }
 
     const paths = model.filesOf(commit.id).map((f) => f.path);

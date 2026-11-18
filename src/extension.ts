@@ -198,6 +198,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   });
 
   register('sift.refresh', async () => {
+    await reloadState();
     await syncWithGit();
   });
 
@@ -747,6 +748,28 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       void vscode.window.showInformationMessage(`Sift: ${parts.join(' ')}`);
     }
   };
+
+  /** Picks up the saved state when another window, an agent or a hand edit changed it. */
+  const reloadState = async (): Promise<void> => {
+    if (await controller.reloadState()) {
+      await comments.rerender();
+    }
+  };
+  let stateTimer: NodeJS.Timeout | undefined;
+  const scheduleReload = () => {
+    clearTimeout(stateTimer);
+    stateTimer = setTimeout(() => void reloadState().catch(() => undefined), 300);
+  };
+  const stateWatcher = vscode.workspace.createFileSystemWatcher(
+    new vscode.RelativePattern(vscode.Uri.file(path.dirname(statePath)), path.basename(statePath)),
+  );
+  context.subscriptions.push(
+    stateWatcher,
+    stateWatcher.onDidChange(scheduleReload),
+    stateWatcher.onDidCreate(scheduleReload),
+    stateWatcher.onDidDelete(scheduleReload),
+    { dispose: () => clearTimeout(stateTimer) },
+  );
 
   let timer: NodeJS.Timeout | undefined;
   const scheduleSync = () => {

@@ -175,6 +175,19 @@ describe('ReviewController end to end', () => {
     expect(redraws).toBe(1);
   });
 
+  it('reloads the saved state when something else changed it, but not after its own writes', async () => {
+    repo.write('src/a.ts', 'changed\n');
+    await controller.startReview();
+    expect(await controller.reloadState()).toBe(false);
+
+    const other = await makeController();
+    await other.newCommit('Made elsewhere');
+
+    expect(await controller.reloadState()).toBe(true);
+    expect(controller.review?.commitsInOrder().map((c) => c.message)).toEqual(['Made elsewhere']);
+    expect(await controller.reloadState()).toBe(false);
+  });
+
   it('abort removes state and snapshot refs but keeps files', async () => {
     repo.write('src/a.ts', 'changed\n');
     await controller.startReview();

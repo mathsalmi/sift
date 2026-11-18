@@ -4,17 +4,40 @@ import type { ReviewState } from '../core/types';
 
 /** Reads and writes the review state file atomically (temp file + rename). */
 export class StateStore {
+  /** The file content as this store last read or wrote it; null when there was no file. */
+  private known: string | null | undefined;
+
   constructor(readonly filePath: string) {}
 
   async load(): Promise<ReviewState | null> {
-    let raw: string;
+    return this.parse(await this.read());
+  }
+
+  /**
+   * Reads the file again when something else (another window, an agent, a hand edit) changed it
+   * since this store last read or wrote it. Returns undefined when it did not change.
+   */
+  async loadIfChanged(): Promise<ReviewState | null | undefined> {
+    const before = this.known;
+    const raw = await this.read();
+    return raw === before ? undefined : this.parse(raw);
+  }
+
+  private async read(): Promise<string | null> {
     try {
-      raw = await fs.readFile(this.filePath, 'utf8');
+      this.known = await fs.readFile(this.filePath, 'utf8');
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        return null;
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        throw error;
       }
-      throw error;
+      this.known = null;
+    }
+    return this.known;
+  }
+
+  private parse(raw: string | null): ReviewState | null {
+    if (raw === null) {
+      return null;
     }
     const state = JSON.parse(raw) as ReviewState;
     if (state.version !== 1) {
@@ -26,12 +49,15 @@ export class StateStore {
   async save(state: ReviewState): Promise<void> {
     await fs.mkdir(path.dirname(this.filePath), { recursive: true });
     const temp = `${this.filePath}.${process.pid}.tmp`;
-    await fs.writeFile(temp, JSON.stringify(state, null, 2) + '\n', 'utf8');
+    const raw = JSON.stringify(state, null, 2) + '\n';
+    await fs.writeFile(temp, raw, 'utf8');
     await fs.rename(temp, this.filePath);
+    this.known = raw;
   }
 
   async remove(): Promise<void> {
     await fs.rm(this.filePath, { force: true });
+    this.known = null;
   }
 }
 

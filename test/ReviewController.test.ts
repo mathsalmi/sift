@@ -124,7 +124,7 @@ describe('ReviewController end to end', () => {
     expect(resumed.review?.iterationsOf(id)).toHaveLength(1);
   });
 
-  it('refuses to approve when HEAD moved outside the extension', async () => {
+  it('approves after an unrelated commit made outside Sift', async () => {
     repo.write('src/a.ts', 'changed\n');
     repo.write('other.txt', 'x\n');
     await controller.startReview();
@@ -136,9 +136,54 @@ describe('ReviewController end to end', () => {
     repo.git('add', 'other.txt');
     repo.git('commit', '-q', '-m', 'outside');
 
-    await expect(controller.approveCurrent()).rejects.toThrow(/HEAD moved/);
-    await controller.resyncHead();
     await expect(controller.approveCurrent()).resolves.toMatchObject({ nextCommitId: null });
+    expect(repo.git('log', '-1', '--format=%s').trim()).toBe('A');
+  });
+
+  it('refuses to commit a file that changed after it was approved', async () => {
+    repo.write('src/a.ts', 'changed\n');
+    await controller.startReview();
+    const id = await controller.newCommit('A');
+    await controller.moveFiles(['src/a.ts'], id);
+    await controller.startCommit(id);
+    await controller.setStatus(['src/a.ts'], 'done');
+
+    repo.write('src/a.ts', 'changed again\n');
+
+    await expect(controller.approveCurrent()).rejects.toThrow(/changed after you approved/);
+    expect(controller.review?.findFile('src/a.ts')).toMatchObject({ status: 'in-progress', changedSinceApproval: true });
+  });
+
+  it('saves only decisions and reads the rest back from git', async () => {
+    repo.write('src/a.ts', 'a changed\n');
+    repo.write('src/b.ts', 'b changed\n');
+    await controller.startReview();
+    writePlan({ commits: [{ message: 'Change a', files: ['src/a.ts'] }, { message: 'Change b', files: ['src/b.ts'] }] });
+    await controller.loadPlan();
+    const [a] = controller.review!.commitsInOrder();
+    await controller.startCommit(a.id);
+    await controller.setStatus(['src/a.ts'], 'done');
+    const { sha } = await controller.approveCurrent();
+
+    const saved = JSON.parse(readFileSync(path.join(repo.dir, '.sift', 'state.json'), 'utf8'));
+    expect(saved.version).toBe(2);
+    expect(saved.commits[0]).not.toHaveProperty('status');
+    expect(saved.commits[0]).not.toHaveProperty('sha');
+    expect(saved.files[0]).not.toHaveProperty('changeType');
+    expect(saved.session).not.toHaveProperty('lastHead');
+    expect(repo.git('show-ref', `refs/sift/${saved.session.id}/${a.id}/commit`)).toContain(sha);
+
+    const resumed = await makeController();
+    expect(resumed.review?.commitsInOrder().map((c) => [c.status, c.sha])).toEqual([
+      ['committed', sha],
+      ['in-review', undefined],
+    ]);
+    expect(resumed.review?.findFile('src/a.ts')).toMatchObject({ changeType: 'modified', adds: 1, dels: 1 });
+
+    // Undoing the commit puts it back in the plan.
+    repo.git('reset', '-q', 'HEAD~1');
+    await resumed.refresh();
+    expect(resumed.review?.getCommit(a.id).status).toBe('planned');
   });
 
   it('marks planned commits committed outside Sift on refresh, so none is left empty', async () => {
@@ -186,6 +231,28 @@ describe('ReviewController end to end', () => {
     expect(await controller.reloadState()).toBe(true);
     expect(controller.review?.commitsInOrder().map((c) => c.message)).toEqual(['Made elsewhere']);
     expect(await controller.reloadState()).toBe(false);
+  });
+
+  it('converts a version 1 state, keeping its committed commits', async () => {
+    repo.write('src/a.ts', 'a changed\n');
+    repo.write('src/b.ts', 'b changed\n');
+    await controller.startReview();
+    writePlan({ commits: [{ message: 'Change a', files: ['src/a.ts'] }, { message: 'Change b', files: ['src/b.ts'] }] });
+    await controller.loadPlan();
+    const [a] = controller.review!.commitsInOrder();
+    await controller.startCommit(a.id);
+    await controller.setStatus(['src/a.ts'], 'done');
+    const { sha } = await controller.approveCurrent();
+
+    // What version 1 saved: derived fields included, no commit refs.
+    const state = controller.review!.state;
+    const sessionId = state.session.id;
+    repo.git('update-ref', '-d', `refs/sift/${sessionId}/${a.id}/commit`);
+    repo.write('.sift/state.json', JSON.stringify({ ...state, version: 1, session: { ...state.session, lastHead: sha } }));
+
+    const resumed = await makeController();
+    expect(resumed.review?.getCommit(a.id)).toMatchObject({ status: 'committed', sha });
+    expect(repo.git('show-ref', `refs/sift/${sessionId}/${a.id}/commit`)).toContain(sha);
   });
 
   it('abort removes state and snapshot refs but keeps files', async () => {

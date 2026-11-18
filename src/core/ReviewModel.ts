@@ -12,19 +12,34 @@ import type {
   ThreadKind,
 } from './types';
 
-/** A commit made since the session's last known HEAD. */
-export interface OutsideCommit {
-  sha: string;
-  subject: string;
-  files: string[];
+/** What git says right now, gathered by the controller for `sync`. */
+export interface GitFacts {
+  /** Files that differ between HEAD and the working tree. */
+  changes: FileChange[];
+  /** Planned commits whose recorded git commit is in HEAD's history: plan commit id → sha. */
+  inHistory: Map<string, string>;
+  /** For files no longer changed: the newest commit since the session's base that touched them (age 0 = newest). */
+  lastTouch: Map<string, { sha: string; age: number }>;
+  /** Current content id of changed files that are approved. */
+  blobs: Map<string, string>;
 }
 
-/** Subjects of planned commits that `syncChanges` settled because their files are no longer changed. */
+/** What `sync` concluded, by commit subject, plus the commit refs the controller must write. */
 export interface SyncOutcome {
-  /** Committed outside Sift. */
+  /** Planned commits found committed outside Sift. */
   committedOutside: string[];
-  /** Its files were reverted: the commit was removed from the plan. */
+  /** Planned commits whose files were reverted: removed from the plan. */
   removed: string[];
+  /** Commits that left HEAD's history (reset, dropped in a rebase) and are back in the plan. */
+  reopened: string[];
+  /** Approved files whose content changed since: back to In progress. */
+  unapproved: string[];
+  /** Plan commit id → git commit to record, or null to forget it. */
+  refs: Map<string, string | null>;
+}
+
+export function emptyOutcome(): SyncOutcome {
+  return { committedOutside: [], removed: [], reopened: [], unapproved: [], refs: new Map() };
 }
 
 export interface NewThread {
@@ -58,11 +73,10 @@ export class ReviewModel {
 
   static create(sessionId: string, head: string, changes: FileChange[], now: string): ReviewModel {
     return new ReviewModel({
-      version: 1,
+      version: 2,
       session: {
         id: sessionId,
         baseCommit: head,
-        lastHead: head,
         currentCommitId: null,
         status: 'active',
         createdAt: now,
@@ -189,96 +203,161 @@ export class ReviewModel {
     return null;
   }
 
-  // ---- changes from disk ----
+  // ---- git ----
 
   /**
-   * Brings the file list in line with the working tree; files of committed commits are kept as history.
+   * Brings the review in line with git. Everything git knows is taken from `facts`, never from
+   * what was saved, so the review can't drift from the repository:
    *
-   * A planned commit whose files all left the working tree's changes was committed or reverted
-   * outside Sift. If one of `outside` (commits made since the last known HEAD) touched its files,
-   * it is marked committed (matched by subject when possible); otherwise it is removed from the plan.
-   * Commits that were empty before (just created by hand) are left alone.
+   * - A planned commit is committed when its recorded git commit is in HEAD's history, or when
+   *   none of its files differ from HEAD anymore and a commit since the session started touched
+   *   them (committed in a terminal, squashed, rebased). If nothing touched them, they were
+   *   reverted and the commit leaves the plan. A commit that left HEAD's history is planned again.
+   * - Changed files come from `facts.changes`; files of committed commits stay as history.
+   * - An approval holds only while the file's content is the one that was approved.
+   *
+   * Commits created empty by hand are left alone.
    */
-  syncChanges(changes: FileChange[], outside: OutsideCommit[] = []): SyncOutcome {
-    const byPath = new Map(changes.map((c) => [c.path, c]));
-    const kept: ReviewFile[] = [];
-    const gone: ReviewFile[] = [];
+  sync(facts: GitFacts): SyncOutcome {
+    const outcome = emptyOutcome();
+    const changed = new Map(facts.changes.map((c) => [c.path, c]));
 
+    for (const commit of this.commitsInOrder()) {
+      const subject = commit.message.split('\n')[0].trim();
+      const wasCommitted = commit.status === 'committed';
+      const recorded = facts.inHistory.get(commit.id);
+      if (recorded) {
+        commit.status = 'committed';
+        commit.sha = recorded;
+        continue;
+      }
+      const files = this.filesOf(commit.id);
+      if (files.length > 0 && files.every((f) => !changed.has(f.path))) {
+        const touch = files
+          .map((f) => facts.lastTouch.get(f.path))
+          .filter((t) => t !== undefined)
+          .sort((x, y) => x.age - y.age)[0];
+        if (touch) {
+          commit.status = 'committed';
+          commit.sha = touch.sha;
+          outcome.refs.set(commit.id, touch.sha);
+          if (!wasCommitted) {
+            outcome.committedOutside.push(subject);
+          }
+        } else {
+          this.state.commits = this.state.commits.filter((c) => c.id !== commit.id);
+          this.state.threads = this.state.threads.filter((t) => t.commitId !== commit.id);
+          this.state.files = this.state.files.filter((f) => f.commitId !== commit.id);
+          outcome.refs.set(commit.id, null);
+          outcome.removed.push(subject);
+        }
+        continue;
+      }
+      if (wasCommitted) {
+        outcome.refs.set(commit.id, null);
+        outcome.reopened.push(subject);
+      }
+      commit.sha = undefined;
+      commit.status = this.state.session.currentCommitId === commit.id ? 'in-review' : 'planned';
+    }
+
+    // Files: history of committed commits, then one pending entry per changed path.
+    const owners = new Map<string, ReviewFile>();
+    for (const file of this.state.files) {
+      if (this.isCommittedFile(file) || !changed.has(file.path)) {
+        continue;
+      }
+      const owner = owners.get(file.path);
+      // Two pending entries for a path (a commit came back while the path had a new entry): keep the planned one.
+      if (!owner || (!owner.commitId && file.commitId)) {
+        owners.set(file.path, file);
+      }
+    }
+    const kept: ReviewFile[] = [];
     for (const file of this.state.files) {
       if (this.isCommittedFile(file)) {
-        // History entry. If the same path changed again, it gets a new pending entry below.
+        file.status = 'done';
         kept.push(file);
         continue;
       }
-      const change = byPath.get(file.path);
-      if (!change) {
-        gone.push(file); // committed or reverted outside Sift: no longer changed
-        continue;
+      if (owners.get(file.path) !== file) {
+        continue; // no longer changed, or a duplicate
       }
+      const change = changed.get(file.path)!;
       file.changeType = change.changeType;
       file.adds = change.adds;
       file.dels = change.dels;
       file.binary = change.binary;
       kept.push(file);
-      byPath.delete(file.path);
     }
-
-    for (const change of byPath.values()) {
-      kept.push(newFile(change));
+    for (const change of facts.changes) {
+      if (!owners.has(change.path)) {
+        kept.push(newFile(change));
+      }
     }
-
     this.state.files = kept;
-    return this.settleEmptiedCommits(gone, outside);
-  }
 
-  private settleEmptiedCommits(gone: ReviewFile[], outside: OutsideCommit[]): SyncOutcome {
-    const outcome: SyncOutcome = { committedOutside: [], removed: [] };
-    const emptied = new Set(gone.map((f) => f.commitId).filter((id): id is string => id !== null));
-    for (const commit of this.commitsInOrder()) {
-      if (!emptied.has(commit.id) || commit.status === 'committed' || this.filesOf(commit.id).length > 0) {
+    // Approvals hold only for the content that was approved.
+    for (const file of kept) {
+      if (file.status !== 'done' || this.isCommittedFile(file)) {
         continue;
       }
-      const subject = commit.message.split('\n')[0].trim();
-      const files = gone.filter((f) => f.commitId === commit.id);
-      const touched = outside.filter((c) => files.some((f) => c.files.includes(f.path)));
-      if (touched.length > 0) {
-        // Prefer the outside commit with the same subject; else the last one that touched its files.
-        const match = touched.find((c) => c.subject.trim() === subject) ?? touched[touched.length - 1];
-        commit.status = 'committed';
-        commit.sha = match.sha;
-        // Keep its files as history, approved, like a commit made in Sift.
-        for (const file of files) {
-          file.status = 'done';
-          this.state.files.push(file);
-        }
-        outcome.committedOutside.push(subject);
-      } else {
-        // Its files were reverted: drop the commit and its threads.
-        this.state.commits = this.state.commits.filter((c) => c.id !== commit.id);
-        this.state.threads = this.state.threads.filter((t) => t.commitId !== commit.id);
-        outcome.removed.push(subject);
+      const blob = facts.blobs.get(file.path);
+      if (blob === undefined) {
+        continue;
       }
-      if (this.state.session.currentCommitId === commit.id) {
-        this.state.session.currentCommitId = null;
+      if (file.approvedBlob === undefined) {
+        file.approvedBlob = blob; // approved before approvals were tied to content
+      } else if (file.approvedBlob !== blob) {
+        file.status = 'in-progress';
+        file.approvedBlob = undefined;
+        file.changedSinceApproval = true;
+        outcome.unapproved.push(file.path);
       }
     }
-    if (outcome.committedOutside.length + outcome.removed.length > 0) {
+
+    const current = this.state.session.currentCommitId;
+    if (current && !this.state.commits.some((c) => c.id === current && c.status !== 'committed')) {
+      this.state.session.currentCommitId = null;
+    }
+    if (outcome.refs.size > 0) {
       this.threadsRevision++;
-      this.finishIfDone();
     }
+    this.finishIfDone();
     return outcome;
   }
 
-  /** Ends the session once every commit is committed and no file is left unassigned. */
-  private finishIfDone(): void {
-    const pending = this.state.commits.some((c) => c.status !== 'committed');
-    if (!pending && this.filesOf(null).length === 0) {
-      this.state.session.status = 'done';
+  /** Paths of files that left the working tree's changes while their commit isn't known as committed. */
+  pathsToTrace(changedPaths: Set<string>, inHistory: Map<string, string>): string[] {
+    const paths = this.state.files
+      .filter((f) => f.commitId !== null && !inHistory.has(f.commitId) && !changedPaths.has(f.path))
+      .map((f) => f.path);
+    return [...new Set(paths)];
+  }
+
+  /** Paths of approved pending files, whose content must be checked. */
+  approvedPaths(): string[] {
+    return this.state.files.filter((f) => f.status === 'done' && !this.isCommittedFile(f)).map((f) => f.path);
+  }
+
+  /** Fills the change type and line counts of a committed commit's files from what its git commit changed. */
+  fillCommitted(commitId: string, changes: FileChange[]): void {
+    const byPath = new Map(changes.map((c) => [c.path, c]));
+    for (const file of this.filesOf(commitId)) {
+      const change = byPath.get(file.path);
+      if (change) {
+        file.changeType = change.changeType;
+        file.adds = change.adds;
+        file.dels = change.dels;
+        file.binary = change.binary;
+      }
     }
   }
 
-  setHead(head: string): void {
-    this.state.session.lastHead = head;
+  /** The session is done once every commit is committed and no file is left unassigned; active otherwise. */
+  private finishIfDone(): void {
+    const pending = this.state.commits.some((c) => c.status !== 'committed');
+    this.state.session.status = !pending && this.filesOf(null).length === 0 ? 'done' : 'active';
   }
 
   // ---- plan ----
@@ -436,13 +515,16 @@ export class ReviewModel {
     this.threadsRevision++;
   }
 
-  setStatus(paths: string[], status: FileStatus): void {
+  /** `blobs`: content ids of the files now, so an approval covers exactly this content. */
+  setStatus(paths: string[], status: FileStatus, blobs?: Map<string, string>): void {
     for (const filePath of paths) {
       const file = this.findFile(filePath);
       if (!file || this.isCommittedFile(file)) {
         continue;
       }
       file.status = status;
+      file.changedSinceApproval = undefined;
+      file.approvedBlob = status === 'done' ? blobs?.get(filePath) : undefined;
       if (status === 'done') {
         file.changedInIteration = undefined;
       }
@@ -480,6 +562,7 @@ export class ReviewModel {
       file.changedInIteration = iteration;
       if (file.status === 'done') {
         file.status = 'in-progress';
+        file.approvedBlob = undefined;
         reset.push(file.path);
       }
     }
@@ -490,7 +573,6 @@ export class ReviewModel {
     const commit = this.getCommit(commitId);
     commit.status = 'committed';
     commit.sha = sha;
-    this.state.session.lastHead = sha;
 
     const next = this.commitsInOrder().find((c) => c.status !== 'committed') ?? null;
     this.state.session.currentCommitId = null;

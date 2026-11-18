@@ -741,11 +741,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     if (outcome.removed.length > 0) {
       parts.push(`Removed from the plan, its changes were reverted: ${quoteList(outcome.removed)}.`);
     }
+    if (outcome.reopened.length > 0) {
+      parts.push(`No longer in git's history, back in the plan: ${quoteList(outcome.reopened)}.`);
+    }
     if (parts.length > 0) {
       if (controller.review?.state.session.status === 'done') {
         parts.push('Every commit is done.');
       }
       void vscode.window.showInformationMessage(`Sift: ${parts.join(' ')}`);
+    }
+    if (outcome.unapproved.length > 0) {
+      // Happens while you edit, so a quiet note rather than a pop-up; the file row says it too.
+      const names = outcome.unapproved.map((p) => path.posix.basename(p));
+      void vscode.window.setStatusBarMessage(`$(eye) Changed after approval, back to In progress: ${quoteList(names)}`, 6000);
     }
   };
 

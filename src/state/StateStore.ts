@@ -40,7 +40,8 @@ export class StateStore {
       return null;
     }
     const state = JSON.parse(raw) as ReviewState;
-    if (state.version !== 1) {
+    const version = state.version as number;
+    if (version !== 1 && version !== 2) {
       throw new Error(`Unsupported state file version ${String(state.version)} in ${this.filePath}.`);
     }
     return withDefaults(state);
@@ -49,7 +50,7 @@ export class StateStore {
   async save(state: ReviewState): Promise<void> {
     await fs.mkdir(path.dirname(this.filePath), { recursive: true });
     const temp = `${this.filePath}.${process.pid}.tmp`;
-    const raw = JSON.stringify(state, null, 2) + '\n';
+    const raw = JSON.stringify(toSaved(state), null, 2) + '\n';
     await fs.writeFile(temp, raw, 'utf8');
     await fs.rename(temp, this.filePath);
     this.known = raw;
@@ -74,8 +75,38 @@ export async function excludeStateDir(gitDir: string): Promise<void> {
   await fs.appendFile(excludeFile, `${prefix}${entry}\n`, 'utf8');
 }
 
+/**
+ * What gets saved: only decisions. Facts git knows (which files changed and how, which commits are
+ * committed) are left out and read from git on load, so the saved state can't drift from the repo.
+ */
+function toSaved(state: ReviewState): unknown {
+  return {
+    ...state,
+    version: 2,
+    commits: state.commits.map(({ status: _status, sha: _sha, ...decision }) => decision),
+    files: state.files.map(({ changeType: _type, adds: _adds, dels: _dels, binary: _binary, ...decision }) => decision),
+  };
+}
+
 /** Fills fields added after M1 so older state files keep loading. */
 function withDefaults(state: ReviewState): ReviewState {
+  const legacyVersion = (state.version as number) === 1;
+  state.version = 2;
+  // Placeholders for what git says; the controller syncs with git before anything is shown.
+  // A version 1 file still has commit status and sha, which the controller turns into commit refs once.
+  for (const commit of state.commits) {
+    if (!legacyVersion || commit.status !== 'committed') {
+      commit.status = commit.id === state.session.currentCommitId ? 'in-review' : 'planned';
+      delete commit.sha;
+    }
+  }
+  for (const file of state.files) {
+    file.changeType = file.changeType ?? 'modified';
+    file.adds = file.adds ?? null;
+    file.dels = file.dels ?? null;
+    file.binary = file.binary ?? false;
+  }
+  delete (state.session as { lastHead?: string }).lastHead;
   state.threads = state.threads ?? [];
   state.session.showExplanations = state.session.showExplanations ?? false;
   // Before the AI became built in, its messages and rounds were Claude's, and a thread could wait on a Claude session.

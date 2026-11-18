@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ReviewModel } from '../src/core/ReviewModel';
+import { ReviewModel, type GitFacts } from '../src/core/ReviewModel';
 import type { FileChange } from '../src/git/changes';
 
 const change = (path: string, changeType: FileChange['changeType'] = 'modified'): FileChange => ({
@@ -100,7 +100,7 @@ describe('review loop', () => {
     m.setStatus(['a.ts'], 'done');
 
     expect(m.markCommitted(id, 'sha1')).toBeNull();
-    expect(m.state.session).toMatchObject({ status: 'done', currentCommitId: null, lastHead: 'sha1' });
+    expect(m.state.session).toMatchObject({ status: 'done', currentCommitId: null });
   });
 
   it('finds the next file to do after the current one, wrapping around', () => {
@@ -114,7 +114,19 @@ describe('review loop', () => {
   });
 });
 
-describe('syncChanges', () => {
+function facts(
+  changes: FileChange[],
+  more: { inHistory?: Record<string, string>; lastTouch?: Record<string, [string, number]>; blobs?: Record<string, string> } = {},
+): GitFacts {
+  return {
+    changes,
+    inHistory: new Map(Object.entries(more.inHistory ?? {})),
+    lastTouch: new Map(Object.entries(more.lastTouch ?? {}).map(([p, [sha, age]]) => [p, { sha, age }])),
+    blobs: new Map(Object.entries(more.blobs ?? {})),
+  };
+}
+
+describe('sync', () => {
   it('adds new files, drops reverted ones and keeps committed history', () => {
     const m = model(['a.ts', 'b.ts']);
     m.applyPlan({ commits: [{ message: 'A', files: ['a.ts'] }] });
@@ -122,7 +134,7 @@ describe('syncChanges', () => {
     m.setStatus(['a.ts'], 'done');
     m.markCommitted(id, 'sha1');
 
-    m.syncChanges([change('c.ts', 'added')]);
+    m.sync(facts([change('c.ts', 'added')], { inHistory: { [id]: 'sha1' } }));
 
     expect(m.state.files.map((f) => f.path).sort()).toEqual(['a.ts', 'c.ts']);
     expect(m.findFile('a.ts')?.commitId).toBe(id);
@@ -135,42 +147,51 @@ describe('syncChanges', () => {
     m.setStatus(['a.ts'], 'done');
     m.markCommitted(id, 'sha1');
 
-    m.syncChanges([change('a.ts')]);
+    m.sync(facts([change('a.ts')], { inHistory: { [id]: 'sha1' } }));
 
     expect(m.state.files.filter((f) => f.path === 'a.ts')).toHaveLength(2);
     expect(m.findFile('a.ts')).toMatchObject({ commitId: null, status: 'todo' });
   });
+
+  it('derives committed status from git alone, as after loading a saved state', () => {
+    const m = model(['a.ts', 'b.ts']);
+    m.applyPlan({ commits: [{ message: 'A', files: ['a.ts'] }, { message: 'B', files: ['b.ts'] }] });
+    const [a, b] = m.commitsInOrder();
+
+    m.sync(facts([change('b.ts')], { inHistory: { [a.id]: 'sha1' } }));
+
+    expect(m.getCommit(a.id)).toMatchObject({ status: 'committed', sha: 'sha1' });
+    expect(m.getCommit(b.id).status).toBe('planned');
+  });
 });
 
-describe('syncChanges with work done outside Sift', () => {
-  it('marks a planned commit committed when an outside commit took its files', () => {
+describe('sync with work done outside Sift', () => {
+  it('marks a planned commit committed when a commit since the start took its files', () => {
     const m = model(['a.ts', 'b.ts']);
     m.applyPlan({ commits: [{ message: 'A', files: ['a.ts'] }, { message: 'B', files: ['b.ts'] }] });
     const [a, b] = m.commitsInOrder();
     m.startCommit(a.id);
 
-    const outcome = m.syncChanges([change('b.ts')], [{ sha: 'x1', subject: 'A', files: ['a.ts'] }]);
+    const outcome = m.sync(facts([change('b.ts')], { lastTouch: { 'a.ts': ['x1', 0] } }));
 
-    expect(outcome).toEqual({ committedOutside: ['A'], removed: [] });
+    expect(outcome.committedOutside).toEqual(['A']);
+    expect(outcome.refs).toEqual(new Map([[a.id, 'x1']]));
     expect(m.getCommit(a.id)).toMatchObject({ status: 'committed', sha: 'x1' });
     expect(m.findFile('a.ts')).toMatchObject({ commitId: a.id, status: 'done' });
     expect(m.state.session.currentCommitId).toBeNull();
     expect(m.getCommit(b.id).status).toBe('planned');
-    expect(m.state.session.status).not.toBe('done');
+    expect(m.state.session.status).toBe('active');
   });
 
-  it('prefers the outside commit with the same subject and ends the session when all are done', () => {
-    const m = model(['a.ts', 'b.ts']);
-    m.applyPlan({ commits: [{ message: 'A', files: ['a.ts'] }, { message: 'B', files: ['b.ts'] }] });
-    const [a, b] = m.commitsInOrder();
+  it('links each commit to the newest commit that touched its files and ends the session when all are done', () => {
+    const m = model(['a.ts', 'b.ts', 'c.ts']);
+    m.applyPlan({ commits: [{ message: 'A', files: ['a.ts'] }, { message: 'BC', files: ['b.ts', 'c.ts'] }] });
+    const [a, bc] = m.commitsInOrder();
 
-    m.syncChanges([], [
-      { sha: 'x1', subject: 'B', files: ['a.ts', 'b.ts'] },
-      { sha: 'x2', subject: 'A', files: ['a.ts'] },
-    ]);
+    m.sync(facts([], { lastTouch: { 'a.ts': ['x2', 1], 'b.ts': ['x2', 1], 'c.ts': ['x1', 0] } }));
 
     expect(m.getCommit(a.id).sha).toBe('x2');
-    expect(m.getCommit(b.id).sha).toBe('x1');
+    expect(m.getCommit(bc.id).sha).toBe('x1');
     expect(m.state.session.status).toBe('done');
   });
 
@@ -179,9 +200,9 @@ describe('syncChanges with work done outside Sift', () => {
     m.applyPlan({ commits: [{ message: 'A', files: ['a.ts'] }, { message: 'B', files: ['b.ts'] }] });
     const empty = m.addCommit('Later');
 
-    const outcome = m.syncChanges([change('b.ts')], []);
+    const outcome = m.sync(facts([change('b.ts')]));
 
-    expect(outcome).toEqual({ committedOutside: [], removed: ['A'] });
+    expect(outcome.removed).toEqual(['A']);
     expect(m.commitsInOrder().map((c) => c.message)).toEqual(['B', 'Later']);
     expect(m.getCommit(empty.id)).toBeDefined();
   });
@@ -190,10 +211,50 @@ describe('syncChanges with work done outside Sift', () => {
     const m = model(['a.ts', 'b.ts']);
     m.applyPlan({ commits: [{ message: 'AB', files: ['a.ts', 'b.ts'] }] });
 
-    const outcome = m.syncChanges([change('b.ts')], [{ sha: 'x1', subject: 'part', files: ['a.ts'] }]);
+    const outcome = m.sync(facts([change('b.ts')], { lastTouch: { 'a.ts': ['x1', 0] } }));
 
-    expect(outcome).toEqual({ committedOutside: [], removed: [] });
+    expect(outcome.committedOutside).toEqual([]);
     expect(m.filesOf(m.commitsInOrder()[0].id).map((f) => f.path)).toEqual(['b.ts']);
+  });
+
+  it('puts a commit back in the plan when it left HEAD\'s history and its files changed again', () => {
+    const m = model(['a.ts']);
+    m.applyPlan({ commits: [{ message: 'A', files: ['a.ts'] }] });
+    const id = m.commitsInOrder()[0].id;
+    m.setStatus(['a.ts'], 'done', new Map([['a.ts', 'blob1']]));
+    m.markCommitted(id, 'sha1');
+
+    const outcome = m.sync(facts([change('a.ts')], { blobs: { 'a.ts': 'blob1' } }));
+
+    expect(outcome.reopened).toEqual(['A']);
+    expect(outcome.refs).toEqual(new Map([[id, null]]));
+    expect(m.getCommit(id).status).toBe('planned');
+    expect(m.state.files.filter((f) => f.path === 'a.ts')).toEqual([expect.objectContaining({ commitId: id, status: 'done' })]);
+  });
+});
+
+describe('approvals tied to content', () => {
+  it('keeps an approval while the content is the same and takes it back when it changes', () => {
+    const m = model(['a.ts']);
+    m.setStatus(['a.ts'], 'done', new Map([['a.ts', 'blob1']]));
+
+    expect(m.sync(facts([change('a.ts')], { blobs: { 'a.ts': 'blob1' } })).unapproved).toEqual([]);
+    expect(m.findFile('a.ts')?.status).toBe('done');
+
+    expect(m.sync(facts([change('a.ts')], { blobs: { 'a.ts': 'blob2' } })).unapproved).toEqual(['a.ts']);
+    expect(m.findFile('a.ts')).toMatchObject({ status: 'in-progress', changedSinceApproval: true, approvedBlob: undefined });
+
+    m.setStatus(['a.ts'], 'done', new Map([['a.ts', 'blob2']]));
+    expect(m.findFile('a.ts')).toMatchObject({ status: 'done', approvedBlob: 'blob2', changedSinceApproval: undefined });
+  });
+
+  it('adopts the current content for approvals made before content was recorded', () => {
+    const m = model(['a.ts']);
+    m.setStatus(['a.ts'], 'done');
+
+    m.sync(facts([change('a.ts')], { blobs: { 'a.ts': 'blob1' } }));
+
+    expect(m.findFile('a.ts')).toMatchObject({ status: 'done', approvedBlob: 'blob1' });
   });
 });
 

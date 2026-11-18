@@ -11,10 +11,8 @@ export type MessageAuthor = 'user' | 'ai';
 
 export interface Session {
   id: string;
-  /** HEAD when the session started. */
+  /** HEAD when the session started; commits after it are searched for planned commits made outside Sift. */
   baseCommit: string;
-  /** HEAD as last seen by the extension; used to detect commits made outside it. */
-  lastHead: string;
   currentCommitId: string | null;
   status: 'active' | 'done';
   createdAt: string;
@@ -29,7 +27,9 @@ export interface PlanCommit {
   message: string;
   intent: string;
   riskNotes: string[];
+  /** Derived, never saved: committed when git's history has it, in review when it is the current commit. */
   status: CommitStatus;
+  /** Derived, never saved: the git commit it became (recorded in a private ref, see git/history.ts). */
   sha?: string;
 }
 
@@ -38,6 +38,11 @@ export interface ReviewFile {
   /** null = Unassigned. */
   commitId: string | null;
   status: FileStatus;
+  /** Git's content id of the file when it was approved; the approval holds only while the content is the same. */
+  approvedBlob?: string;
+  /** The file changed after it was approved, so it went back to In progress. */
+  changedSinceApproval?: boolean;
+  /** Derived from git, never saved (as are the line counts and `binary`). */
   changeType: ChangeType;
   adds: number | null;
   dels: number | null;
@@ -84,7 +89,8 @@ export interface ReviewThread {
 }
 
 export interface ReviewState {
-  version: 1;
+  /** 2: facts git knows (file changes, committed commits) are no longer saved. */
+  version: 2;
   session: Session;
   commits: PlanCommit[];
   files: ReviewFile[];

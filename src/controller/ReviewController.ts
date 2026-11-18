@@ -2,11 +2,12 @@ import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
 import * as vscode from 'vscode';
-import { ReviewModel, type SyncOutcome } from '../core/ReviewModel';
+import { emptyOutcome, ReviewModel, type SyncOutcome } from '../core/ReviewModel';
 import { ignorePaths, trackedPaths, type IgnoreTarget } from '../git/ignore';
 import type { FileStatus, IterationAuthor, PlanInput, ReviewThread } from '../core/types';
 import type { GitRunner } from '../git/GitRunner';
-import { commitPaths, commitsBetween, currentHead, fileDiff, hasStagedChanges, listChanges, operationInProgress } from '../git/changes';
+import { commitChanges, commitPaths, currentHead, fileDiff, hasStagedChanges, listChanges, operationInProgress } from '../git/changes';
+import { blobHashes, inHeadHistory, lastTouches, readCommitRefs, setCommitRef } from '../git/history';
 import { type SnapshotService, sessionRefPrefix, snapshotRef } from '../git/SnapshotService';
 import { excludeStateDir, type StateStore } from '../state/StateStore';
 import { SCHEME, snapshotUri } from '../ui/SnapshotContentProvider';
@@ -24,6 +25,8 @@ export type PlanFileResult =
  */
 export class ReviewController implements vscode.Disposable {
   private model: ReviewModel | null = null;
+  /** What each git commit changed; commits never change, so this never goes stale. */
+  private readonly commitChangesCache = new Map<string, Awaited<ReturnType<typeof commitChanges>>>();
   private readonly changed = new vscode.EventEmitter<void>();
   readonly onDidChange = this.changed.event;
 
@@ -57,9 +60,7 @@ export class ReviewController implements vscode.Disposable {
   }
 
   async init(): Promise<void> {
-    const state = await this.store.load();
-    this.model = state ? new ReviewModel(state) : null;
-    await this.fire();
+    await this.adopt(await this.store.load());
   }
 
   /** Picks up the saved state when something outside this window changed it. Returns true when it did. */
@@ -68,9 +69,17 @@ export class ReviewController implements vscode.Disposable {
     if (state === undefined) {
       return false;
     }
-    this.model = state ? new ReviewModel(state) : null;
-    await this.fire();
+    await this.adopt(state);
     return true;
+  }
+
+  /** Takes a loaded state, filling what git knows before anything is shown. */
+  private async adopt(state: Awaited<ReturnType<StateStore['load']>>): Promise<void> {
+    this.model = state ? new ReviewModel(state) : null;
+    if (this.model) {
+      await this.sync(this.model).catch(() => undefined);
+    }
+    await this.fire();
   }
 
   // ---- session ----
@@ -126,17 +135,50 @@ export class ReviewController implements vscode.Disposable {
     return outcome;
   }
 
-  /** Syncs the file list with git, taking a HEAD that moved outside Sift into account. */
+  /**
+   * Reads what git knows (changed files, which planned commits are in HEAD's history, the content
+   * of approved files) and lets the model settle the review on it. See ReviewModel.sync.
+   */
   private async sync(model: ReviewModel): Promise<SyncOutcome> {
     if (await operationInProgress(this.git)) {
       // Mid-rebase or merge the working tree is temporary: keep the plan as it is until git is done.
-      return { committedOutside: [], removed: [] };
+      return emptyOutcome();
     }
-    const head = await currentHead(this.git);
-    const last = model.state.session.lastHead;
-    const outside = head === last ? [] : await commitsBetween(this.git, last, head);
-    model.setHead(head);
-    return model.syncChanges(await listChanges(this.git), outside);
+    const sessionId = model.state.session.id;
+    const refs = await readCommitRefs(this.git, sessionId);
+    // Sessions saved before commit refs existed kept the sha in the state: record it once.
+    for (const commit of model.state.commits) {
+      if (commit.status === 'committed' && commit.sha && !refs.has(commit.id)) {
+        await setCommitRef(this.git, sessionId, commit.id, commit.sha);
+        refs.set(commit.id, commit.sha);
+      }
+    }
+    const inHistory = new Map<string, string>();
+    for (const [commitId, sha] of refs) {
+      if (model.state.commits.some((c) => c.id === commitId) && (await inHeadHistory(this.git, sha))) {
+        inHistory.set(commitId, sha);
+      }
+    }
+    const changes = await listChanges(this.git);
+    const changedPaths = new Set(changes.map((c) => c.path));
+    const lastTouch = await lastTouches(this.git, model.state.session.baseCommit, model.pathsToTrace(changedPaths, inHistory));
+    const blobs = await blobHashes(this.git, model.approvedPaths().filter((p) => changedPaths.has(p)));
+
+    const outcome = model.sync({ changes, inHistory, lastTouch, blobs });
+    for (const [commitId, sha] of outcome.refs) {
+      await setCommitRef(this.git, sessionId, commitId, sha);
+    }
+    for (const commit of model.state.commits) {
+      if (commit.status === 'committed' && commit.sha) {
+        let changed = this.commitChangesCache.get(commit.sha);
+        if (!changed) {
+          changed = await commitChanges(this.git, commit.sha);
+          this.commitChangesCache.set(commit.sha, changed);
+        }
+        model.fillCommitted(commit.id, changed);
+      }
+    }
+    return outcome;
   }
 
   /** Git-tracked files among `paths`: adding them to an ignore file would not hide their changes. */
@@ -265,29 +307,35 @@ export class ReviewController implements vscode.Disposable {
   }
 
   async setStatus(paths: string[], status: FileStatus): Promise<void> {
-    this.require().setStatus(paths, status);
+    // An approval covers the content as it is now; editing the file later takes it back.
+    const blobs = status === 'done' ? await blobHashes(this.git, paths) : undefined;
+    this.require().setStatus(paths, status, blobs);
     await this.persist();
   }
 
   async approveCurrent(): Promise<{ sha: string; nextCommitId: string | null }> {
     const model = this.require();
+    // Catch up with git first: commits made outside Sift, files changed since they were approved.
+    const outcome = await this.sync(model);
     const commit = model.currentCommit();
     if (!commit) {
-      throw new Error('No commit is in review.');
+      await this.persist();
+      throw new Error(
+        outcome.committedOutside.length > 0 ? 'This commit was already committed outside Sift.' : 'No commit is in review.',
+      );
     }
     const blocker = model.approvalBlocker(commit.id);
     if (blocker) {
-      throw new Error(blocker);
-    }
-    const head = await currentHead(this.git);
-    if (head !== model.state.session.lastHead) {
-      throw new Error('HEAD moved outside Sift. Run "Refresh" to re-sync, then approve again.');
+      await this.persist();
+      throw new Error(outcome.unapproved.length > 0 ? `${blocker} Some changed after you approved them.` : blocker);
     }
 
     const paths = model.filesOf(commit.id).map((f) => f.path);
     const sha = await commitPaths(this.git, paths, commit.message);
-    const next = model.markCommitted(commit.id, sha);
-    model.syncChanges(await listChanges(this.git));
+    await setCommitRef(this.git, model.state.session.id, commit.id, sha);
+    model.markCommitted(commit.id, sha);
+    await this.sync(model);
+    const next = model.commitsInOrder().find((c) => c.status !== 'committed') ?? null;
     if (next) {
       model.startCommit(next.id);
       if (!model.latestIteration(next.id)) {
@@ -296,18 +344,6 @@ export class ReviewController implements vscode.Disposable {
     }
     await this.persist();
     return { sha, nextCommitId: next?.id ?? null };
-  }
-
-  /** Accepts the current HEAD after a commit made outside the extension. */
-  async resyncHead(): Promise<SyncOutcome> {
-    return this.refresh();
-  }
-
-  async headMovedOutside(): Promise<boolean> {
-    if (!this.model) {
-      return false;
-    }
-    return (await currentHead(this.git)) !== this.model.state.session.lastHead;
   }
 
   // ---- plan from the AI ----

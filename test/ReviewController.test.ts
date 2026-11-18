@@ -82,6 +82,10 @@ describe('ReviewController end to end', () => {
     expect(lastDiff().left.query).toBe(v0.treeSha);
     expect(lastDiff().title).toContain('v0 ↔ v1');
 
+    // A file the round didn't change shows its whole change instead of an empty diff
+    await controller.openDiff('src/c.ts');
+    expect(lastDiff().left.query).toBe('HEAD');
+
     // Cumulative diff = HEAD ↔ working tree
     controller.diffMode = 'cumulative';
     await controller.openDiff('src/a.ts');

@@ -480,7 +480,8 @@ export class ReviewController implements vscode.Disposable {
       left = from ? snapshotUri(from.treeSha, filePath) : snapshotUri('HEAD', filePath);
       right = to ? snapshotUri(to.treeSha, filePath) : workingTree;
       title = `${name} (${from ? `v${from.n}` : 'HEAD'} ↔ ${to ? `v${to.n}` : 'now'})`;
-    } else if (this.diffMode === 'round' && latest && previous) {
+    } else if (this.diffMode === 'round' && latest && previous && file.changedInIteration === latest.n) {
+      // "This round" only for files the last round changed; any other file would show an empty diff.
       left = snapshotUri(previous.treeSha, filePath);
       title = `${name} (v${previous.n} ↔ v${latest.n} · this round)`;
     } else if (latest) {

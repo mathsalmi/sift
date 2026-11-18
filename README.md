@@ -11,7 +11,7 @@ When an AI (or you) changes hundreds of files in one go, reviewing a single gian
 - **AI commit plan:** one click groups every changed file into ordered, atomic commits, with an intent, risk notes and explanations on the lines that matter. Drag files between commits to adjust.
 - **Ask about any line:** in a comment, ask a question (the AI answers in the thread) or give a direction (the AI edits the code and says what it changed). Markdown works, **Cmd+Enter** sends, and the thread shows *Thinking…* while the AI works. Edit or delete your own comments.
 - **Your choice of AI:** Claude Code (uses your Claude login, e.g. through the Claude Code extension), any model VS Code exposes (GitHub Copilot or other extensions), or any command line tool.
-- **Versions per file:** each round is frozen in a snapshot, and every file gets its own version numbers: a file goes from v0 to v1 only when a round changed it, so an untouched file stays at v0 while another reaches v7. You can diff:
+- **Versions per file:** Sift freezes your files in a snapshot when a commit's review starts and after each AI edit, and every file gets its own version numbers: a file goes from v0 to v1 only when a round changed it, so an untouched file stays at v0 while another reaches v7. You can diff:
   - **Latest change** ("This round"): the file's previous version ↔ working tree, while the change is unseen.
   - **Cumulative:** HEAD ↔ working tree, i.e. what will be committed.
   - **Any of the file's versions ↔ now,** e.g. v1 ↔ working tree.
@@ -111,7 +111,7 @@ Diff editor buttons: Ask AI · Previous / next file in the commit · Approve / u
 
 Right-click a commit for: Approve and commit · Review this commit · Edit message · Move up / down · Delete. Right-click a file for: Approve / unapprove · Mark in progress / to do · Add to .gitignore · Exclude locally (.git/info/exclude) · Move to commit…. Right-click an editor tab of a review file for **Sift**: Show in Sift sidebar · Approve / unapprove · Mark in progress · Mark to do · Add to .gitignore · Exclude locally.
 
-Also in the Sift view and command palette: Plan commits with AI · Choose AI… · Start review · Load plan · New commit · Refresh (re-reads git and the saved state) · View as tree / list · Collapse / expand all · Start over…. Command palette only: Take snapshot (marks a new version of the files you edited by hand; Sift already takes one when a commit starts and after each AI edit).
+Also in the Sift view and command palette: Plan commits with AI · Choose AI… · Start review · Load plan · New commit · Refresh (re-reads git and the saved state) · View as tree / list · Collapse / expand all · Start over….
 
 ## Settings
 

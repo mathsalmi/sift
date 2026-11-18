@@ -127,12 +127,6 @@
         "icon": "$(versions)"
       },
       {
-        "command": "sift.takeSnapshot",
-        "title": "Take snapshot (new round)",
-        "category": "Sift",
-        "icon": "$(device-camera)"
-      },
-      {
         "command": "sift.revealFile",
         "title": "Show in Sift sidebar",
         "category": "Sift",

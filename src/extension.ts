@@ -379,21 +379,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }
   });
 
-  register('sift.takeSnapshot', async () => {
-    const n = await controller.takeSnapshot('user');
-    const model = controller.review;
-    const commitId = model?.state.session.currentCommitId ?? null;
-    const changed = model?.iterationsOf(commitId ?? '').find((i) => i.n === n)?.changed ?? [];
-    // Only files of the commit in review get a version; the snapshot saves the others too, unchanged.
-    const files = model?.filesOf(commitId).filter((f) => changed.includes(f.path)) ?? [];
-    if (n === null || files.length === 0) {
-      void vscode.window.showInformationMessage('No file of this commit changed since its last version.');
-      return;
-    }
-    const names = files.map((f) => `${path.posix.basename(f.path)} v${model!.fileVersionAt(commitId, f.path, n)}`);
-    void vscode.window.showInformationMessage(`New version: ${names.slice(0, 5).join(', ')}${names.length > 5 ? ` and ${names.length - 5} more` : ''}.`);
-  });
-
   /** Files a file action applies to: the clicked tab, the selected tree rows, or the active editor. */
   const actionPaths = (node?: TreeNode | vscode.Uri, selected?: TreeNode[]): string[] => {
     if (node instanceof vscode.Uri) {

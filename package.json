@@ -364,11 +364,6 @@
           "group": "navigation@2"
         },
         {
-          "command": "sift.takeSnapshot",
-          "when": "view == sift.plan && sift.active",
-          "group": "navigation@3"
-        },
-        {
           "command": "sift.approveCommit",
           "when": "view == sift.plan && sift.active",
           "group": "navigation@4"

@@ -259,6 +259,33 @@ describe('ReviewController end to end', () => {
     expect(repo.git('show-ref', `refs/sift/${sessionId}/${a.id}/commit`)).toContain(sha);
   });
 
+  it('versions only the files that changed, and skips snapshots that change none of the commit', async () => {
+    repo.write('src/a.ts', 'a changed\n');
+    repo.write('src/b.ts', 'b changed\n');
+    repo.write('src/c.ts', 'c new\n');
+    await controller.startReview();
+    writePlan({ commits: [{ message: 'AB', files: ['src/a.ts', 'src/b.ts'] }, { message: 'C', files: ['src/c.ts'] }] });
+    await controller.loadPlan();
+    const model = controller.review!;
+    const [ab] = model.commitsInOrder();
+    await controller.startCommit(ab.id);
+
+    repo.write('src/c.ts', 'c changed\n');
+    expect(await controller.takeSnapshot('user')).toBeNull();
+
+    repo.write('src/b.ts', 'b fixed\n');
+    expect(await controller.takeSnapshot('ai')).toBe(1);
+    repo.write('src/b.ts', 'b fixed again\n');
+    expect(await controller.takeSnapshot('ai')).toBe(2);
+
+    expect(model.fileVersion(model.findFile('src/a.ts')!)).toBe(0);
+    expect(model.fileVersion(model.findFile('src/b.ts')!)).toBe(2);
+    await controller.openDiff('src/b.ts');
+    expect(lastDiff().title).toBe('b.ts (v1 ↔ v2 · latest change)');
+    await controller.openDiff('src/a.ts');
+    expect(lastDiff().title).toBe('a.ts (HEAD ↔ v0 · cumulative)');
+  });
+
   it('abort removes state and snapshot refs but keeps files', async () => {
     repo.write('src/a.ts', 'changed\n');
     await controller.startReview();

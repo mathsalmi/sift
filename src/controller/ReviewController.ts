@@ -165,6 +165,10 @@ export class ReviewController implements vscode.Disposable {
     const blobs = await blobHashes(this.git, model.approvedPaths().filter((p) => changedPaths.has(p)));
 
     const outcome = model.sync({ changes, inHistory, lastTouch, blobs });
+    for (const iteration of model.missingChanges()) {
+      const previous = model.iterationsOf(iteration.commitId).filter((i) => i.n < iteration.n).at(-1);
+      iteration.changed = previous ? await this.snapshots.changedPaths(previous.treeSha, iteration.treeSha) : [];
+    }
     for (const [commitId, sha] of outcome.refs) {
       await setCommitRef(this.git, sessionId, commitId, sha);
     }
@@ -294,7 +298,10 @@ export class ReviewController implements vscode.Disposable {
     await this.persist();
   }
 
-  /** Freezes the working tree as the next round. Returns the new version number, or null if nothing changed. */
+  /**
+   * Freezes the working tree as the next round, giving a new version to the commit's files that changed.
+   * Returns the snapshot number, or null when no file of the commit changed.
+   */
   async takeSnapshot(author: IterationAuthor): Promise<number | null> {
     const model = this.require();
     const commit = model.currentCommit();
@@ -464,8 +471,11 @@ export class ReviewController implements vscode.Disposable {
     const name = path.basename(filePath);
     const workingTree = file.changeType === 'deleted' ? snapshotUri('empty', filePath) : this.fileUri(filePath);
     const iterations = file.commitId ? model.iterationsOf(file.commitId) : [];
-    const latest = iterations.at(-1);
-    const previous = iterations.at(-2);
+    // Version numbers in titles are the file's own: they only go up when the file changed.
+    const version = (n: number) => `v${model.fileVersionAt(file.commitId, filePath, n)}`;
+    const versions = model.fileVersions(file.commitId, filePath);
+    const latest = versions.at(-1);
+    const previous = versions.at(-2);
 
     let left = snapshotUri('HEAD', filePath);
     let right = workingTree;
@@ -479,13 +489,13 @@ export class ReviewController implements vscode.Disposable {
       }
       left = from ? snapshotUri(from.treeSha, filePath) : snapshotUri('HEAD', filePath);
       right = to ? snapshotUri(to.treeSha, filePath) : workingTree;
-      title = `${name} (${from ? `v${from.n}` : 'HEAD'} ↔ ${to ? `v${to.n}` : 'now'})`;
-    } else if (this.diffMode === 'round' && latest && previous && file.changedInIteration === latest.n) {
-      // "This round" only for files the last round changed; any other file would show an empty diff.
+      title = `${name} (${from ? version(from.n) : 'HEAD'} ↔ ${to ? version(to.n) : 'now'})`;
+    } else if (this.diffMode === 'round' && latest && previous && file.changedInIteration !== undefined) {
+      // The file's last change, while it is unseen; once approved, the whole change again.
       left = snapshotUri(previous.treeSha, filePath);
-      title = `${name} (v${previous.n} ↔ v${latest.n} · this round)`;
+      title = `${name} (${version(previous.n)} ↔ ${version(latest.n)} · latest change)`;
     } else if (latest) {
-      title = `${name} (HEAD ↔ v${latest.n} · cumulative)`;
+      title = `${name} (HEAD ↔ ${version(latest.n)} · cumulative)`;
     }
 
     await vscode.commands.executeCommand('vscode.diff', left, right, title, { preview: true });
@@ -533,11 +543,16 @@ export class ReviewController implements vscode.Disposable {
       return previous.n;
     }
 
+    const changed = previous ? await this.snapshots.changedPaths(previous.treeSha, tree) : undefined;
+    if (changed && !force && !model.filesOf(commitId).some((f) => changed.includes(f.path))) {
+      return null; // only files of other commits changed: no new version of any file here
+    }
     const n = model.nextIterationNumber(commitId);
     const sessionId = model.state.session.id;
     const snapshot = await this.snapshots.store(tree, snapshotRef(sessionId, commitId, n), `sift ${commitId} v${n}`);
     model.addIteration({
       n,
+      changed,
       commitId,
       treeSha: snapshot.treeSha,
       commitSha: snapshot.commitSha,
@@ -546,8 +561,8 @@ export class ReviewController implements vscode.Disposable {
       createdAt: new Date().toISOString(),
     });
 
-    if (previous) {
-      model.applyRoundChanges(await this.snapshots.changedPaths(previous.treeSha, tree), n);
+    if (changed) {
+      model.applyRoundChanges(changed, n);
     }
     await this.sync(model);
     return n;

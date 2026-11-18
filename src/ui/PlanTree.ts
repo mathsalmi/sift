@@ -156,11 +156,7 @@ export class PlanTree implements vscode.TreeDataProvider<PlanNode>, vscode.TreeD
       item.description = `Committed ${commit.sha?.slice(0, 7) ?? ''}`;
       item.contextValue = 'commit-committed';
     } else {
-      const latest = model?.latestIteration(commit.id);
       const parts = [COMMIT_STATUS_LABEL[status], `${approved}/${files.length} approved`];
-      if (latest) {
-        parts.push(`v${latest.n}`);
-      }
       if (isCurrent) {
         parts.push('in review');
       }
@@ -184,7 +180,8 @@ export class PlanTree implements vscode.TreeDataProvider<PlanNode>, vscode.TreeD
   private fileItem(file: ReviewFile, committed: boolean): vscode.TreeItem {
     const item = new vscode.TreeItem(path.posix.basename(file.path), vscode.TreeItemCollapsibleState.None);
     item.id = `file:${file.commitId ?? 'none'}:${file.path}`;
-    item.description = fileDescription(file, !this.options.asTree);
+    const model = this.controller.review;
+    item.description = fileDescription(file, !this.options.asTree, (n) => model?.fileVersionAt(file.commitId, file.path, n) ?? n);
     item.iconPath = fileIcon(file);
     item.tooltip = `${file.path}\n${file.changeType} · ${STATUS_TEXT[file.status]}`;
     item.resourceUri = changeUri(file);

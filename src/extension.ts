@@ -360,12 +360,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       void vscode.window.showInformationMessage('Open a file of the review first.');
       return;
     }
-    const commitId = model.findFile(filePath)?.commitId;
+    const commitId = model.findFile(filePath)?.commitId ?? null;
+    // Only the file's own versions: snapshots that didn't change it hold the same content.
     const picks: Array<vscode.QuickPickItem & { from: number | 'HEAD' }> = [
       { label: 'HEAD', description: 'last commit', from: 'HEAD' },
-      ...(commitId ? model.iterationsOf(commitId) : [])
-        .map((i) => ({
-          label: `v${i.n}`,
+      ...model
+        .fileVersions(commitId, filePath)
+        .map((i, version) => ({
+          label: `v${version}`,
           description: `${i.author === 'initial' ? 'start of the review' : `after ${i.author === 'ai' ? 'AI' : 'your'} changes`} · ${new Date(i.createdAt).toLocaleString()}`,
           from: i.n as number | 'HEAD',
         }))
@@ -379,11 +381,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   register('sift.takeSnapshot', async () => {
     const n = await controller.takeSnapshot('user');
-    if (n === null) {
-      void vscode.window.showInformationMessage('Nothing changed since the last version.');
+    const model = controller.review;
+    const commitId = model?.state.session.currentCommitId ?? null;
+    const changed = model?.iterationsOf(commitId ?? '').find((i) => i.n === n)?.changed ?? [];
+    // Only files of the commit in review get a version; the snapshot saves the others too, unchanged.
+    const files = model?.filesOf(commitId).filter((f) => changed.includes(f.path)) ?? [];
+    if (n === null || files.length === 0) {
+      void vscode.window.showInformationMessage('No file of this commit changed since its last version.');
       return;
     }
-    void vscode.window.showInformationMessage(`Snapshot v${n} taken. "This round" diffs now show v${n - 1} ↔ v${n}.`);
+    const names = files.map((f) => `${path.posix.basename(f.path)} v${model!.fileVersionAt(commitId, f.path, n)}`);
+    void vscode.window.showInformationMessage(`New version: ${names.slice(0, 5).join(', ')}${names.length > 5 ? ` and ${names.length - 5} more` : ''}.`);
   });
 
   /** Files a file action applies to: the clicked tab, the selected tree rows, or the active editor. */

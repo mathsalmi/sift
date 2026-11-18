@@ -44,9 +44,6 @@ export class StatusBar implements vscode.Disposable {
       parts.push('done');
     } else if (p.currentIndex !== null) {
       parts.push(`Commit ${p.currentIndex + 1}/${p.commitCount}`);
-      if (p.currentIteration !== null) {
-        parts.push(`v${p.currentIteration}`);
-      }
     } else {
       parts.push(`${p.committedCommits}/${p.commitCount} committed`);
     }

@@ -76,7 +76,8 @@ export class BoardTree implements vscode.TreeDataProvider<BoardNode> {
     const label = this.options.asTree ? file.path.slice(file.path.lastIndexOf('/') + 1) : file.path;
     const item = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.None);
     item.id = `board:${file.commitId ?? 'none'}:${file.path}`;
-    item.description = fileDescription(file, false);
+    const model = this.controller.review;
+    item.description = fileDescription(file, false, (n) => model?.fileVersionAt(file.commitId, file.path, n) ?? n);
     item.iconPath = fileIcon(file);
     item.resourceUri = changeUri(file);
     item.checkboxState = fileCheckbox(file);

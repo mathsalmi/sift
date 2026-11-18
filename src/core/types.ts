@@ -47,12 +47,18 @@ export interface ReviewFile {
   adds: number | null;
   dels: number | null;
   binary: boolean;
-  /** Set when a new snapshot changed this file; shown as "changed in vN". */
+  /** Set when a new snapshot changed this file (snapshot number); shown as "changed in vK" with the file's own version. */
   changedInIteration?: number;
 }
 
+/**
+ * A snapshot of the working tree while a commit is in review (n counts the commit's snapshots).
+ * Files get their own version numbers from these: a file's version only goes up in a snapshot that changed it.
+ */
 export interface Iteration {
   n: number;
+  /** Paths that differ from the commit's previous snapshot; absent on the first. */
+  changed?: string[];
   commitId: string;
   treeSha: string;
   commitSha: string;

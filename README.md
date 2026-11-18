@@ -11,10 +11,10 @@ When an AI (or you) changes hundreds of files in one go, reviewing a single gian
 - **AI commit plan:** one click groups every changed file into ordered, atomic commits, with an intent, risk notes and explanations on the lines that matter. Drag files between commits to adjust.
 - **Ask about any line:** in a comment, ask a question (the AI answers in the thread) or give a direction (the AI edits the code and says what it changed). Markdown works, **Cmd+Enter** sends, and the thread shows *Thinking…* while the AI works. Edit or delete your own comments.
 - **Your choice of AI:** Claude Code (uses your Claude login, e.g. through the Claude Code extension), any model VS Code exposes (GitHub Copilot or other extensions), or any command line tool.
-- **Review rounds with snapshots:** each round is frozen as v0, v1, v2…, so you can diff:
-  - **This round:** previous version ↔ working tree, i.e. only the latest fixes.
+- **Versions per file:** each round is frozen in a snapshot, and every file gets its own version numbers: a file goes from v0 to v1 only when a round changed it, so an untouched file stays at v0 while another reaches v7. You can diff:
+  - **Latest change** ("This round"): the file's previous version ↔ working tree, while the change is unseen.
   - **Cumulative:** HEAD ↔ working tree, i.e. what will be committed.
-  - **Any version ↔ now,** e.g. v1 ↔ working tree.
+  - **Any of the file's versions ↔ now,** e.g. v1 ↔ working tree.
 
   Pick one with the **Compare with** dropdown in the diff editor title.
 - **Native VS Code:** real diff editor, inline comment threads, go-to-definition and editing inside the diff all keep working.
@@ -111,7 +111,7 @@ Diff editor buttons: Ask AI · Previous / next file in the commit · Approve / u
 
 Right-click a commit for: Approve and commit · Review this commit · Edit message · Move up / down · Delete. Right-click a file for: Approve / unapprove · Mark in progress / to do · Add to .gitignore · Exclude locally (.git/info/exclude) · Move to commit…. Right-click an editor tab of a review file for **Sift**: Show in Sift sidebar · Approve / unapprove · Mark in progress · Mark to do · Add to .gitignore · Exclude locally.
 
-Also in the Sift view and command palette: Plan commits with AI · Choose AI… · Start review · Load plan · New commit · Take snapshot · Refresh (re-reads git and the saved state) · View as tree / list · Collapse / expand all · Start over….
+Also in the Sift view and command palette: Plan commits with AI · Choose AI… · Start review · Load plan · New commit · Refresh (re-reads git and the saved state) · View as tree / list · Collapse / expand all · Start over…. Command palette only: Take snapshot (marks a new version of the files you edited by hand; Sift already takes one when a commit starts and after each AI edit).
 
 ## Settings
 
@@ -130,7 +130,7 @@ Also in the Sift view and command palette: Plan commits with AI · Choose AI… 
 ## How it works
 
 - **Snapshots:** git trees built with a private index (`.git/sift/index`) and kept under `refs/sift/<session>/<commit>/v<N>`. Your real index isn't touched until you approve.
-- **AI calls:** Sift sends the prompt (numbered diffs, the file, the thread) to the chosen AI and asks for JSON. Claude Code runs with read-only tools (`Read`, `Grep`, `Glob`) inside the repo, and no MCP servers or slash commands. A one-shot run cannot ask for permission, so anything else is denied unless you allow it with `sift.ai.claudeCodeAdditionalDirectories` or `sift.ai.claudeCodeAllowedTools`. Code changes come back as search/replace edits; Sift applies all of them or none, only inside the repo, then takes a new snapshot so "this round" shows exactly what the AI changed.
+- **AI calls:** Sift sends the prompt (numbered diffs, the file, the thread) to the chosen AI and asks for JSON. Claude Code runs with read-only tools (`Read`, `Grep`, `Glob`) inside the repo, and no MCP servers or slash commands. A one-shot run cannot ask for permission, so anything else is denied unless you allow it with `sift.ai.claudeCodeAdditionalDirectories` or `sift.ai.claudeCodeAllowedTools`. Code changes come back as search/replace edits; Sift applies all of them or none, only inside the repo, then takes a new snapshot so the files the AI changed get a new version and "latest change" shows exactly what it did.
 - **Comments:** stored in the state file and anchored by line text, so they follow code that moves. A thread whose line is gone shows as outdated.
 - **State:** `.sift/state.json` holds only your decisions: the plan, file assignments, approvals, comments. What git knows is read from git every time and never saved: which files changed and how, and which planned commits are committed. Each commit Sift makes is recorded in `refs/sift/<session>/<commit>/commit`; nothing is added to commit messages.
 - **Commits made outside Sift** (terminal, Source Control view, rebase, squash) are picked up as they happen, and when VS Code starts. A planned commit whose files no longer differ from HEAD is committed, linked to the newest commit that touched them; if no commit touched them they were reverted and the commit leaves the plan. A commit that leaves HEAD's history (`git reset`) goes back to the plan. Commits you created empty are left alone.

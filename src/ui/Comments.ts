@@ -38,14 +38,15 @@ export class ThreadComment implements vscode.Comment {
     readonly index: number,
     private readonly message: ThreadMessage,
     avatars: Avatars,
+    /** The file's version when the message was written; shown once the file has more than one. */
+    version: number | null,
   ) {
     this.body = markdown(message.body);
     this.author =
       message.author === 'ai'
         ? { name: message.model ?? 'AI', iconPath: avatars.ai }
         : { name: 'You', iconPath: avatars.you };
-    // The version only means something once the file's commit is in review.
-    this.label = message.iteration > 0 ? `v${message.iteration}` : undefined;
+    this.label = version === null ? undefined : `v${version}`;
     this.timestamp = new Date(message.createdAt);
     this.contextValue = message.author === 'user' ? 'own' : 'ai';
   }
@@ -266,7 +267,13 @@ export class CommentsManager implements vscode.Disposable {
       vsThread.range = range;
     }
 
-    const comments = thread.messages.map((m, index) => new ThreadComment(thread.id, index, m, this.avatars));
+    const model = this.review.review;
+    // The file's own version numbers, shown once it has more than one.
+    const versionAt = (n: number) => model?.fileVersionAt(thread.commitId, thread.path, n) ?? n;
+    const showVersions = (model?.fileVersions(thread.commitId, thread.path).length ?? 0) > 1;
+    const comments = thread.messages.map(
+      (m, index) => new ThreadComment(thread.id, index, m, this.avatars, showVersions ? versionAt(m.iteration) : null),
+    );
     const shown: vscode.Comment[] = [...comments];
     if (thread.status === 'sent') {
       // A placeholder answer, so the thread shows the AI is working on it.
@@ -286,7 +293,7 @@ export class CommentsManager implements vscode.Disposable {
     if (thread.error && thread.status === 'open') {
       kindLabel = `AI couldn't answer: ${thread.error}`;
     }
-    vsThread.label = anchor.outdated ? `${kindLabel} · outdated (from v${thread.iteration})` : kindLabel;
+    vsThread.label = anchor.outdated ? `${kindLabel} · outdated (from v${versionAt(thread.iteration)})` : kindLabel;
     vsThread.contextValue = `${thread.kind}-${thread.status}`;
     vsThread.canReply = true;
     vsThread.state =

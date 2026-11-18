@@ -258,6 +258,27 @@ describe('approvals tied to content', () => {
   });
 });
 
+describe('file versions', () => {
+  it('gives each file its own version, which only goes up when the file changed', () => {
+    const m = model(['a.ts', 'b.ts']);
+    m.applyPlan({ commits: [{ message: 'AB', files: ['a.ts', 'b.ts'] }] });
+    const id = m.commitsInOrder()[0].id;
+    const snapshot = (n: number, changed?: string[]) =>
+      m.addIteration({ n, changed, commitId: id, treeSha: `t${n}`, commitSha: `c${n}`, ref: `r${n}`, author: 'ai', createdAt: '' });
+    snapshot(0);
+    snapshot(1, ['b.ts']);
+    snapshot(2, ['b.ts', 'other.ts']);
+    snapshot(3, ['a.ts']);
+
+    expect(m.fileVersions(id, 'a.ts').map((i) => i.n)).toEqual([0, 3]);
+    expect(m.fileVersions(id, 'b.ts').map((i) => i.n)).toEqual([0, 1, 2]);
+    expect(m.fileVersion(m.findFile('a.ts')!)).toBe(1);
+    expect(m.fileVersion(m.findFile('b.ts')!)).toBe(2);
+    expect(m.fileVersionAt(id, 'a.ts', 2)).toBe(0);
+    expect(m.fileVersionAt(id, 'b.ts', 3)).toBe(2);
+  });
+});
+
 describe('commit editing', () => {
   it('reorders planned commits but never moves past a committed one', () => {
     const m = model();

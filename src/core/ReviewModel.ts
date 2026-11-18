@@ -127,6 +127,29 @@ export class ReviewModel {
     return this.state.iterations.filter((i) => i.commitId === commitId).sort((a, b) => a.n - b.n);
   }
 
+  /**
+   * The snapshots that hold a new version of the file: the first one, then each one that changed it.
+   * Index k is the file's version k, so a file nobody touched stays at v0 while others move on.
+   */
+  fileVersions(commitId: string | null, filePath: string): Iteration[] {
+    if (!commitId) {
+      return [];
+    }
+    return this.iterationsOf(commitId).filter((i, index) => index === 0 || (i.changed ?? []).includes(filePath));
+  }
+
+  /** The file's version in snapshot `n` of its commit (0 when it never changed). */
+  fileVersionAt(commitId: string | null, filePath: string, n: number): number {
+    const versions = this.fileVersions(commitId, filePath).filter((i) => i.n <= n);
+    return Math.max(versions.length - 1, 0);
+  }
+
+  /** The file's latest version number, or null before its commit has a snapshot. */
+  fileVersion(file: ReviewFile): number | null {
+    const versions = this.fileVersions(file.commitId, file.path);
+    return versions.length > 0 ? versions.length - 1 : null;
+  }
+
   latestIteration(commitId: string): Iteration | null {
     const iterations = this.iterationsOf(commitId);
     return iterations.at(-1) ?? null;
@@ -551,6 +574,11 @@ export class ReviewModel {
   }
 
   /** Files changed by a new round: Done goes back to In progress so nothing changes unseen. */
+  /** Fills `changed` on snapshots saved before it was recorded. */
+  missingChanges(): Iteration[] {
+    return this.state.iterations.filter((i) => i.n > 0 && i.changed === undefined);
+  }
+
   applyRoundChanges(changedPaths: string[], iteration: number): string[] {
     this.threadsRevision++;
     const changed = new Set(changedPaths);

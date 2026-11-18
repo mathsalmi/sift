@@ -42,8 +42,11 @@ export function commitIcon(status: CommitReviewStatus): vscode.ThemeIcon {
   }
 }
 
-/** "src/ui · +12 -3 · changed in v2" */
-export function fileDescription(file: ReviewFile, withDir: boolean): string {
+/**
+ * "src/ui · +12 -3 · changed in v2". `versionOf` turns a snapshot number into the file's own
+ * version number (a file's version only goes up when the file changed).
+ */
+export function fileDescription(file: ReviewFile, withDir: boolean, versionOf: (n: number) => number): string {
   const parts: string[] = [];
   const dir = path.posix.dirname(file.path);
   if (withDir && dir !== '.') {
@@ -57,7 +60,7 @@ export function fileDescription(file: ReviewFile, withDir: boolean): string {
   if (file.changedSinceApproval) {
     parts.push('changed since approval');
   } else if (file.changedInIteration !== undefined) {
-    parts.push(`changed in v${file.changedInIteration}`);
+    parts.push(`changed in v${versionOf(file.changedInIteration)}`);
   }
   return parts.join(' · ');
 }

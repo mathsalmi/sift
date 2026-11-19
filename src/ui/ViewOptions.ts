@@ -3,8 +3,9 @@ import * as vscode from 'vscode';
 export type ExpandMode = 'default' | 'all' | 'none';
 
 /**
- * How the Plan and Board views show files: as a list or nested in folders, and the last
- * "collapse all" / "expand all". Shared by both views; the list/tree choice is remembered.
+ * How the Plan and Board views show files: as a list or nested in folders, with or without
+ * approved files, and the last "collapse all" / "expand all". Shared by both views; the
+ * list/tree and approved-files choices are remembered.
  */
 export class ViewOptions implements vscode.Disposable {
   private readonly changed = new vscode.EventEmitter<void>();
@@ -30,6 +31,22 @@ export class ViewOptions implements vscode.Disposable {
     await this.memento.update('sift.viewAsTree', asTree);
     await this.updateContext();
     this.changed.fire();
+  }
+
+  /** Whether approved files are listed. Hidden ones disappear as soon as they are approved. */
+  get showDone(): boolean {
+    return this.memento.get<boolean>('sift.showDone', true);
+  }
+
+  async setShowDone(show: boolean): Promise<void> {
+    await this.memento.update('sift.showDone', show);
+    await this.updateContext();
+    this.changed.fire();
+  }
+
+  /** The files to list: all of them, or all but the approved ones. */
+  visible<F extends { status: string }>(files: F[]): F[] {
+    return this.showDone ? files : files.filter((f) => f.status !== 'done');
   }
 
   get collapsed(): boolean {
@@ -62,5 +79,6 @@ export class ViewOptions implements vscode.Disposable {
   private async updateContext(): Promise<void> {
     await vscode.commands.executeCommand('setContext', 'sift.viewAsTree', this.asTree);
     await vscode.commands.executeCommand('setContext', 'sift.treeCollapsed', this.collapsed);
+    await vscode.commands.executeCommand('setContext', 'sift.hideDone', !this.showDone);
   }
 }

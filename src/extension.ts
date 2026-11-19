@@ -446,6 +446,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       void vscode.window.showInformationMessage(`${uri instanceof vscode.Uri ? path.basename(uri.fsPath) : 'This file'} is not in the review: it has no uncommitted changes.`);
       return;
     }
+    if (file.status === 'done' && !viewOptions.showDone) {
+      const show = await vscode.window.showInformationMessage(
+        `${path.posix.basename(file.path)} is approved, and approved files are hidden.`,
+        'Show approved files',
+      );
+      if (!show) {
+        return;
+      }
+      await viewOptions.setShowDone(true);
+    }
     // Revealing expands the commit (and folders) that hold the file.
     await planView.reveal({ kind: 'file', path: file.path, commitId: file.commitId }, { select: true, focus: true, expand: true });
   });
@@ -513,6 +523,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   register('sift.expandAll', () => viewOptions.setCollapsed(false));
   register('sift.viewAsTree', () => viewOptions.setAsTree(true));
   register('sift.viewAsList', () => viewOptions.setAsTree(false));
+  register('sift.hideDone', () => viewOptions.setShowDone(false));
+  register('sift.showDone', () => viewOptions.setShowDone(true));
 
   register('sift.toggleBoardScope', async () => {
     controller.boardShowAll = !controller.boardShowAll;

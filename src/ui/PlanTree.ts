@@ -49,7 +49,7 @@ export class PlanTree implements vscode.TreeDataProvider<PlanNode>, vscode.TreeD
       return [];
     }
     const commitId = node.kind === 'unassigned' ? null : node.commitId;
-    const files = model.filesOf(commitId);
+    const files = this.options.visible(model.filesOf(commitId));
     if (!this.options.asTree) {
       return files.map((f) => ({ kind: 'file', path: f.path, commitId }));
     }
@@ -143,9 +143,11 @@ export class PlanTree implements vscode.TreeDataProvider<PlanNode>, vscode.TreeD
     const isCurrent = model?.state.session.currentCommitId === commit.id;
     const approved = files.filter((f) => f.status === 'done').length;
     const status = model?.commitReviewStatus(commit.id) ?? 'todo';
-    const state = this.options.state(
-      isCurrent ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed,
-    );
+    // A commit whose files are all hidden (approved) has nothing to expand.
+    const state =
+      this.options.visible(files).length === 0
+        ? vscode.TreeItemCollapsibleState.None
+        : this.options.state(isCurrent ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed);
     const title = `${commit.order}. ${commit.message.split('\n')[0]}`;
     // The commit in review is highlighted instead of getting its own icon.
     const item = new vscode.TreeItem(isCurrent ? { label: title, highlights: [[0, title.length]] } : title, state);

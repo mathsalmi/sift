@@ -19,6 +19,7 @@ When an AI (or you) changes hundreds of files in one go, reviewing a single gian
   Pick one with the **Compare with** dropdown in the diff editor title.
 - **Native VS Code:** real diff editor, inline comment threads, go-to-definition and editing inside the diff all keep working.
 - **Files as a list or a tree:** switch with the list/tree button in the view title, like the Source Control view. Collapse or expand everything with the button next to it.
+- **Hide approved files:** the eye button in the view title hides files as soon as you approve them, so only what's left to review stays in view. Approved files are shown by default.
 - **Review status:** tick a file's checkbox to approve it. Sift asks first when the file still has unresolved comments. A commit is **To do** until one file is approved, **In progress** while some are, and **Approved** when all are. Files that change after you approved them go back to In progress.
 - **You stay in control:** the AI never stages or commits. Only your Approve click commits, with your git identity and hooks.
 
@@ -111,7 +112,7 @@ Diff editor buttons: Ask AI · Previous / next file in the commit · Approve / u
 
 Right-click a commit for: Approve and commit · Review this commit · Edit message · Move up / down · Delete. Right-click a file for: Approve / unapprove · Mark in progress / to do · Add to .gitignore · Exclude locally (.git/info/exclude) · Move to commit…. Right-click an editor tab of a review file for **Sift**: Show in Sift sidebar · Approve / unapprove · Mark in progress · Mark to do · Add to .gitignore · Exclude locally.
 
-Also in the Sift view and command palette: Plan commits with AI · Choose AI… · Start review · Load plan · New commit · Refresh (re-reads git and the saved state) · View as tree / list · Collapse / expand all · Start over….
+Also in the Sift view and command palette: Plan commits with AI · Choose AI… · Start review · Load plan · New commit · Refresh (re-reads git and the saved state) · Hide / show approved files · View as tree / list · Collapse / expand all · Start over….
 
 ## Settings
 

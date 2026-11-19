@@ -308,6 +308,18 @@
         "icon": "$(list-flat)"
       },
       {
+        "command": "sift.hideDone",
+        "title": "Hide approved files",
+        "category": "Sift",
+        "icon": "$(eye-closed)"
+      },
+      {
+        "command": "sift.showDone",
+        "title": "Show approved files",
+        "category": "Sift",
+        "icon": "$(eye)"
+      },
+      {
         "command": "sift.diffRound",
         "title": "Previous version (this round)",
         "category": "Sift"
@@ -388,6 +400,16 @@
           "group": "z@0"
         },
         {
+          "command": "sift.hideDone",
+          "when": "view == sift.plan && sift.active && !sift.hideDone",
+          "group": "navigation@7"
+        },
+        {
+          "command": "sift.showDone",
+          "when": "view == sift.plan && sift.active && sift.hideDone",
+          "group": "navigation@7"
+        },
+        {
           "command": "sift.viewAsTree",
           "when": "view == sift.plan && sift.active && !sift.viewAsTree",
           "group": "navigation@8"
@@ -406,6 +428,16 @@
           "command": "sift.expandAll",
           "when": "view == sift.plan && sift.active && sift.treeCollapsed",
           "group": "navigation@9"
+        },
+        {
+          "command": "sift.hideDone",
+          "when": "view == sift.board && sift.active && !sift.hideDone",
+          "group": "navigation@7"
+        },
+        {
+          "command": "sift.showDone",
+          "when": "view == sift.board && sift.active && sift.hideDone",
+          "group": "navigation@7"
         },
         {
           "command": "sift.viewAsTree",
@@ -543,6 +575,14 @@
         }
       ],
       "commandPalette": [
+        {
+          "command": "sift.hideDone",
+          "when": "sift.active && !sift.hideDone"
+        },
+        {
+          "command": "sift.showDone",
+          "when": "sift.active && sift.hideDone"
+        },
         {
           "command": "sift.openDiff",
           "when": "false"

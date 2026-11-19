@@ -35,7 +35,7 @@ export class BoardTree implements vscode.TreeDataProvider<BoardNode> {
       return [];
     }
     if (!node) {
-      return GROUPS.map((g) => ({ kind: 'group', status: g.status }));
+      return GROUPS.filter((g) => g.status !== 'done' || this.options.showDone).map((g) => ({ kind: 'group', status: g.status }));
     }
     if (node.kind === 'file') {
       return [];

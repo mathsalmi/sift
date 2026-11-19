@@ -83,13 +83,29 @@ describe('review loop', () => {
     expect(m.findFile('b.ts')?.status).toBe('done');
   });
 
-  it('marks opened files in progress, but never done ones', () => {
+  it('marks opened files in progress, but never done or unassigned ones', () => {
     const m = model();
+    m.applyPlan({ commits: [{ message: 'AB', files: ['a.ts', 'b.ts'] }] });
     m.setStatus(['b.ts'], 'done');
 
     expect(m.markOpened('a.ts')).toBe(true);
     expect(m.markOpened('b.ts')).toBe(false);
+    expect(m.markOpened('c.ts')).toBe(false);
     expect(m.findFile('a.ts')?.status).toBe('in-progress');
+    expect(m.findFile('c.ts')?.status).toBe('todo');
+  });
+
+  it('reviews files only inside a commit: unassigned ones have no status', () => {
+    const m = model();
+    m.applyPlan({ commits: [{ message: 'A', files: ['a.ts'] }] });
+
+    m.setStatus(['a.ts', 'c.ts'], 'done');
+    expect(m.findFile('a.ts')?.status).toBe('done');
+    expect(m.findFile('c.ts')?.status).toBe('todo');
+
+    // Moving an approved file out of its commit starts its review over.
+    m.moveFiles(['a.ts'], null);
+    expect(m.findFile('a.ts')).toMatchObject({ status: 'todo', approvedBlob: undefined });
   });
 
   it('ends the session when the last commit is committed and nothing is unassigned', () => {
@@ -250,6 +266,7 @@ describe('sync with work done outside Sift', () => {
 describe('approvals tied to content', () => {
   it('keeps an approval while the content is the same and takes it back when it changes', () => {
     const m = model(['a.ts']);
+    m.applyPlan({ commits: [{ message: 'A', files: ['a.ts'] }] });
     m.setStatus(['a.ts'], 'done', new Map([['a.ts', 'blob1']]));
 
     expect(m.sync(facts([change('a.ts')], { blobs: { 'a.ts': 'blob1' } })).unapproved).toEqual([]);
@@ -264,11 +281,21 @@ describe('approvals tied to content', () => {
 
   it('adopts the current content for approvals made before content was recorded', () => {
     const m = model(['a.ts']);
+    m.applyPlan({ commits: [{ message: 'A', files: ['a.ts'] }] });
     m.setStatus(['a.ts'], 'done');
 
     m.sync(facts([change('a.ts')], { blobs: { 'a.ts': 'blob1' } }));
 
     expect(m.findFile('a.ts')).toMatchObject({ status: 'done', approvedBlob: 'blob1' });
+  });
+
+  it('clears the status of unassigned files saved by earlier versions', () => {
+    const m = model(['a.ts']);
+    m.state.files[0].status = 'done';
+
+    m.sync(facts([change('a.ts')], { blobs: { 'a.ts': 'blob1' } }));
+
+    expect(m.findFile('a.ts')?.status).toBe('todo');
   });
 });
 

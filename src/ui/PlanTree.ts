@@ -69,7 +69,7 @@ export class PlanTree implements vscode.TreeDataProvider<PlanNode>, vscode.TreeD
     }
     const commitId = node.kind === 'unassigned' ? null : node.commitId;
     let files = this.options.visible(model.filesOf(commitId));
-    if (this.options.groupByStatus && (node.kind === 'commit' || node.kind === 'unassigned')) {
+    if (this.options.groupByStatus && node.kind === 'commit') {
       return STATUS_GROUPS.filter((g) => files.some((f) => f.status === g.status)).map((g) => ({
         kind: 'status',
         status: g.status,
@@ -274,6 +274,11 @@ export class PlanTree implements vscode.TreeDataProvider<PlanNode>, vscode.TreeD
     item.resourceUri = changeUri(file);
     if (committed) {
       item.contextValue = 'file-committed';
+    } else if (!file.commitId) {
+      // Reviewed only once in a commit: no checkbox or status yet.
+      item.contextValue = 'file-unassigned';
+      item.iconPath = vscode.ThemeIcon.File;
+      item.tooltip = `${file.path}\n${file.changeType} · not in a commit yet: move it to one to review it`;
     } else {
       item.checkboxState = fileCheckbox(file);
       item.contextValue = `file-${file.status}`;

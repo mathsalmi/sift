@@ -247,23 +247,39 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }
   });
 
-  register('sift.moveToCommit', async (node?: TreeNode, selected?: TreeNode[]) => {
+  register('sift.moveToCommit', async (node?: TreeNode | vscode.Uri, selected?: TreeNode[]) => {
     const model = controller.review;
-    const paths = selectedPaths(controller, node, selected);
+    const paths = actionPaths(node, selected);
     if (!model || paths.length === 0) {
       return;
     }
-    const picks = [
-      { label: '$(inbox) Unassigned', commitId: null as string | null },
+    // The commit the files are in already, when they are all in the same one, isn't offered.
+    const from = new Set(paths.map((p) => model.findFile(p)?.commitId ?? null));
+    const same = from.size === 1 ? [...from][0] : undefined;
+    type Pick = vscode.QuickPickItem & { commitId?: string | null };
+    const picks: Pick[] = [
       ...model
         .commitsInOrder()
-        .filter((c) => c.status !== 'committed')
-        .map((c) => ({ label: `${c.order}. ${c.message}`, commitId: c.id as string | null })),
+        .filter((c) => c.status !== 'committed' && c.id !== same)
+        .map((c) => ({ label: `${c.order}. ${c.message.split('\n')[0]}`, commitId: c.id as string | null })),
+      ...(same === null ? [] : [{ label: '$(inbox) Unassigned', commitId: null }]),
+      { label: '$(add) New commit…' },
     ];
-    const pick = await vscode.window.showQuickPick(picks, { placeHolder: `Move ${paths.length} file(s) to…` });
-    if (pick) {
-      await controller.moveFiles(paths, pick.commitId);
+    const what = paths.length === 1 ? path.posix.basename(paths[0]) : `${paths.length} files`;
+    // With no other commit to pick, go straight to naming a new one.
+    const pick = picks.length === 1 ? picks[0] : await vscode.window.showQuickPick(picks, { placeHolder: `Move ${what} to…` });
+    if (!pick) {
+      return;
     }
+    let commitId = pick.commitId;
+    if (commitId === undefined) {
+      const message = await vscode.window.showInputBox({ prompt: `Message of the new commit for ${what}`, ignoreFocusOut: true });
+      if (!message?.trim()) {
+        return;
+      }
+      commitId = await controller.newCommit(message);
+    }
+    await controller.moveFiles(paths, commitId);
   });
 
   // ---- review loop ----
@@ -353,9 +369,21 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   const setStatus = (status: FileStatus) => async (node?: TreeNode | vscode.Uri, selected?: TreeNode[]) => {
     const fromTab = node instanceof vscode.Uri;
-    const paths = actionPaths(node, selected);
-    if (paths.length === 0) {
+    const all = actionPaths(node, selected);
+    if (all.length === 0) {
       void vscode.window.showInformationMessage('Select a file in the tree or open one in the diff editor.');
+      return;
+    }
+    // Files are reviewed as part of a commit: unassigned ones need a commit first.
+    const paths = all.filter((p) => controller.review?.findFile(p)?.commitId);
+    if (paths.length === 0) {
+      const choice = await vscode.window.showInformationMessage(
+        `${all.length === 1 ? path.posix.basename(all[0]) + ' is' : 'These files are'} not in a commit yet. Move ${all.length === 1 ? 'it' : 'them'} to a commit to review ${all.length === 1 ? 'it' : 'them'}.`,
+        'Move to commit…',
+      );
+      if (choice) {
+        await vscode.commands.executeCommand('sift.moveToCommit', fromTab ? node : undefined, fromTab ? undefined : all.map((p) => ({ kind: 'file', path: p, commitId: null })));
+      }
       return;
     }
     if (status === 'done' && !(await confirmUnresolved(paths, 'Approve'))) {
@@ -678,12 +706,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     const committed = new Set(model?.state.commits.filter((c) => c.status === 'committed').map((c) => c.id));
     const all: string[] = [];
     const byStatus: Record<FileStatus, string[]> = { todo: [], 'in-progress': [], done: [] };
+    const unassigned: string[] = [];
     for (const file of model?.state.files ?? []) {
       // resourcePath of a working-tree file, and of a snapshot (a side of a version diff).
       const keys = [path.join(root, ...file.path.split('/')), `/${file.path}`];
       all.push(...keys);
       // Committed files can only be revealed, as in the sidebar.
-      if (!(file.commitId && committed.has(file.commitId))) {
+      if (!file.commitId) {
+        unassigned.push(...keys);
+      } else if (!committed.has(file.commitId)) {
         byStatus[file.status].push(...keys);
       }
     }
@@ -691,14 +722,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     void vscode.commands.executeCommand('setContext', 'sift.todoFiles', byStatus.todo);
     void vscode.commands.executeCommand('setContext', 'sift.inProgressFiles', byStatus['in-progress']);
     void vscode.commands.executeCommand('setContext', 'sift.doneFiles', byStatus.done);
+    void vscode.commands.executeCommand('setContext', 'sift.unassignedFiles', unassigned);
   };
   updateFileContext();
   context.subscriptions.push(controller.onDidChange(updateFileContext));
 
   const updateActiveFileContext = () => {
     const filePath = controller.activeFilePath();
-    const approved = filePath ? controller.review?.findFile(filePath)?.status === 'done' : false;
-    void vscode.commands.executeCommand('setContext', 'sift.activeFileApproved', approved);
+    const file = filePath ? controller.review?.findFile(filePath) : undefined;
+    void vscode.commands.executeCommand('setContext', 'sift.activeFileApproved', file?.status === 'done');
+    void vscode.commands.executeCommand('setContext', 'sift.activeFileAssigned', Boolean(file?.commitId));
   };
   context.subscriptions.push(
     vscode.window.onDidChangeActiveTextEditor(updateActiveFileContext),

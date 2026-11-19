@@ -634,12 +634,12 @@
         },
         {
           "command": "sift.ignoreFile",
-          "when": "viewItem =~ /^file-(todo|in-progress|done)$/",
+          "when": "viewItem =~ /^file-(todo|in-progress|done|unassigned)$/",
           "group": "1_ignore@1"
         },
         {
           "command": "sift.excludeFile",
-          "when": "viewItem =~ /^file-(todo|in-progress|done)$/",
+          "when": "viewItem =~ /^file-(todo|in-progress|done|unassigned)$/",
           "group": "1_ignore@2"
         },
         {
@@ -654,7 +654,7 @@
         },
         {
           "command": "sift.moveToCommit",
-          "when": "viewItem =~ /^file-(todo|in-progress|done)$/",
+          "when": "viewItem =~ /^file-(todo|in-progress|done|unassigned)$/",
           "group": "2@1"
         }
       ],
@@ -676,7 +676,7 @@
         },
         {
           "command": "sift.markDone",
-          "when": "sift.active && isInDiffEditor && !sift.activeFileApproved",
+          "when": "sift.active && isInDiffEditor && sift.activeFileAssigned && !sift.activeFileApproved",
           "group": "navigation@3"
         },
         {
@@ -931,13 +931,18 @@
         },
         {
           "command": "sift.ignoreFile",
-          "when": "resourcePath in sift.todoFiles || resourcePath in sift.inProgressFiles || resourcePath in sift.doneFiles",
+          "when": "resourcePath in sift.todoFiles || resourcePath in sift.inProgressFiles || resourcePath in sift.doneFiles || resourcePath in sift.unassignedFiles",
           "group": "1_ignore@1"
         },
         {
           "command": "sift.excludeFile",
-          "when": "resourcePath in sift.todoFiles || resourcePath in sift.inProgressFiles || resourcePath in sift.doneFiles",
+          "when": "resourcePath in sift.todoFiles || resourcePath in sift.inProgressFiles || resourcePath in sift.doneFiles || resourcePath in sift.unassignedFiles",
           "group": "1_ignore@2"
+        },
+        {
+          "command": "sift.moveToCommit",
+          "when": "resourcePath in sift.todoFiles || resourcePath in sift.inProgressFiles || resourcePath in sift.doneFiles || resourcePath in sift.unassignedFiles",
+          "group": "2@1"
         }
       ]
     },

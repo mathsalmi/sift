@@ -337,6 +337,13 @@ export class ReviewModel {
     }
     this.state.files = kept;
 
+    // Reviews from before unassigned files had no status.
+    for (const file of kept) {
+      if (!file.commitId && file.status !== 'todo') {
+        this.clearReview(file);
+      }
+    }
+
     // Approvals hold only for the content that was approved.
     for (const file of kept) {
       if (file.status !== 'done' || this.isCommittedFile(file)) {
@@ -540,7 +547,18 @@ export class ReviewModel {
         continue;
       }
       file.commitId = commitId;
+      if (!commitId) {
+        // Unassigned files aren't reviewed: they start over once they join a commit.
+        this.clearReview(file);
+      }
     }
+  }
+
+  private clearReview(file: ReviewFile): void {
+    file.status = 'todo';
+    file.approvedBlob = undefined;
+    file.approvedBefore = undefined;
+    file.changedSinceApproval = undefined;
   }
 
   // ---- review loop ----
@@ -560,7 +578,8 @@ export class ReviewModel {
   setStatus(paths: string[], status: FileStatus, blobs?: Map<string, string>): void {
     for (const filePath of paths) {
       const file = this.findFile(filePath);
-      if (!file || this.isCommittedFile(file)) {
+      // Files are reviewed as part of a commit; unassigned ones have no status.
+      if (!file || !file.commitId || this.isCommittedFile(file)) {
         continue;
       }
       file.status = status;
@@ -576,7 +595,7 @@ export class ReviewModel {
   /** Opening a file to review moves it from to do to in progress. */
   markOpened(filePath: string): boolean {
     const file = this.findFile(filePath);
-    if (!file || file.status !== 'todo' || this.isCommittedFile(file)) {
+    if (!file || !file.commitId || file.status !== 'todo' || this.isCommittedFile(file)) {
       return false;
     }
     file.status = 'in-progress';

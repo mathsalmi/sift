@@ -176,21 +176,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   register('sift.start', async () => {
     const count = await controller.startReview();
+    // Every changed file starts in Unassigned, unless .sift/plan.json already holds a plan.
     const plan = await controller.checkPlanFile();
     if (plan.result === 'applied') {
       void vscode.window.showInformationMessage(`Review started with ${count} changed file(s) and the plan in .sift/plan.json.`);
-      return;
-    }
-    const choice = await vscode.window.showInformationMessage(
-      `Review started with ${count} changed file(s). Let the AI plan the commits, or create them by hand.`,
-      'Plan with AI',
-      'New commit',
-    );
-    if (choice === 'Plan with AI') {
-      await vscode.commands.executeCommand('sift.planWithAi');
-    }
-    if (choice === 'New commit') {
-      await vscode.commands.executeCommand('sift.newCommit');
     }
   });
 

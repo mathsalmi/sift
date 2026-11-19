@@ -132,7 +132,7 @@ Diff editor buttons: Ask AI · Previous / next file in the commit · Approve / u
 
 Right-click a commit for: Approve and commit · Review this commit · Edit message · Move up / down · Delete. Right-click a file for: Approve / unapprove · Mark in progress / to do · Add to .gitignore · Exclude locally (.git/info/exclude) · Move to commit…. Right-click a locally excluded file for: Remove from .git/info/exclude. Right-click an editor tab of a review file for **Sift**: Show in Sift sidebar · Approve / unapprove · Mark in progress · Mark to do · Add to .gitignore · Exclude locally.
 
-Also in the Sift view and command palette: Plan commits with AI · Choose AI… · Start review · New commit · Refresh (re-reads git and the saved state) · Group / stop grouping files by status · Hide / show approved files · Remove from .git/info/exclude · View as tree / list · Collapse / expand all · Discard plan.
+Also in the Sift view and command palette: Plan commits with AI · Choose AI… · Plan commits manually · New commit · Refresh (re-reads git and the saved state) · Group / stop grouping files by status · Hide / show approved files · Remove from .git/info/exclude · View as tree / list · Collapse / expand all · Discard plan.
 
 ## Settings
 

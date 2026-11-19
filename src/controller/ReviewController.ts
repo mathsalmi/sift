@@ -619,7 +619,7 @@ export class ReviewController implements vscode.Disposable {
 
   private require(): ReviewModel {
     if (!this.model) {
-      throw new Error('No review session. Click "Plan commits with AI" or "Start review" first.');
+      throw new Error('No review session. Click "Plan commits with AI" or "Plan commits manually" first.');
     }
     return this.model;
   }

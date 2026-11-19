@@ -38,7 +38,7 @@
     "viewsWelcome": [
       {
         "view": "sift.plan",
-        "contents": "No review session in this repository.\n[$(sparkle) Plan commits with AI](command:sift.planWithAi)\nThe AI groups your uncommitted changes into commits and explains them.\n[Start review](command:sift.start)\nOr start without AI and create commits by hand.\nAI: [choose which AI to use](command:sift.chooseAi)",
+        "contents": "No review session in this repository.\n[$(sparkle) Plan commits with AI](command:sift.planWithAi)\nThe AI groups your uncommitted changes into commits and explains them.\n[Plan commits manually](command:sift.start)\nCreate commits yourself and drag files into them.",
         "when": "!sift.active"
       },
       {
@@ -50,7 +50,7 @@
     "commands": [
       {
         "command": "sift.start",
-        "title": "Start review",
+        "title": "Plan commits manually",
         "category": "Sift"
       },
       {

@@ -168,6 +168,23 @@ export class ReviewModel {
     return later ?? files[0];
   }
 
+  /**
+   * The next file to review after this commit is done: the first one left in the commits that come
+   * after it (wrapping around), skipping committed ones. Null when every planned file is approved.
+   */
+  nextTodoInOtherCommit(commitId: string | null): ReviewFile | null {
+    const commits = this.commitsInOrder().filter((c) => c.status !== 'committed');
+    const at = commits.findIndex((c) => c.id === commitId);
+    const ordered = [...commits.slice(at + 1), ...commits.slice(0, Math.max(at, 0))];
+    for (const commit of ordered) {
+      const next = this.nextTodo(commit.id);
+      if (next) {
+        return next;
+      }
+    }
+    return null;
+  }
+
   /** All files approved → approved; some → in progress; none → to do. */
   commitReviewStatus(commitId: string): CommitReviewStatus {
     if (this.getCommit(commitId).status === 'committed') {

@@ -105,7 +105,7 @@ Sift also picks up `.sift/plan.json` whenever it is written, by hand or by anoth
 | Ask AI about all open comments | Cmd+Alt+Enter | Ctrl+Alt+Enter |
 | Approve file | Cmd+Alt+D | Ctrl+Alt+D |
 | Mark to do | Cmd+Alt+U | Ctrl+Alt+U |
-| Next to do | Cmd+Alt+N | Ctrl+Alt+N |
+| Next to do (moves on to the next commit once this one is done) | Cmd+Alt+N | Ctrl+Alt+N |
 | Toggle diff mode | Cmd+Alt+M | Ctrl+Alt+M |
 | Send a comment (Ask AI) | Cmd+Enter | Ctrl+Enter |
 | Open the Sift view (also when the sidebar is hidden) | Ctrl+Shift+S | Ctrl+Alt+S |

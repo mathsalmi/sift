@@ -112,6 +112,20 @@ describe('review loop', () => {
     expect(m.nextTodo(id, 'a.ts')?.path).toBe('c.ts');
     expect(m.nextTodo(id, 'c.ts')?.path).toBe('a.ts');
   });
+
+  it('finds the next file to do in the commits after this one, wrapping around', () => {
+    const m = model();
+    m.applyPlan({ commits: [{ message: 'A', files: ['a.ts'] }, { message: 'B', files: ['b.ts'] }, { message: 'C', files: ['c.ts'] }] });
+    const [a, b, c] = m.commitsInOrder().map((x) => x.id);
+    m.setStatus(['b.ts'], 'done');
+
+    expect(m.nextTodoInOtherCommit(a)?.path).toBe('c.ts');
+    expect(m.nextTodoInOtherCommit(c)?.path).toBe('a.ts');
+    expect(m.nextTodoInOtherCommit(null)?.path).toBe('a.ts');
+    m.markCommitted(a, 'sha1');
+    expect(m.nextTodoInOtherCommit(c)).toBeNull();
+    expect(m.nextTodoInOtherCommit(b)?.path).toBe('c.ts');
+  });
 });
 
 function facts(

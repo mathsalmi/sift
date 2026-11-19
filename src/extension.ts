@@ -476,7 +476,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   });
 
   register('sift.nextTodo', async () => {
-    await openNextTodo(controller, controller.activeFilePath() ?? undefined);
+    await openNextTodo(controller, controller.activeFilePath() ?? undefined, true);
   });
 
   const openAdjacent = (delta: -1 | 1) => async () => {
@@ -886,16 +886,36 @@ function selectedPaths(controller: ReviewController, node?: TreeNode, selected?:
   return active ? [active] : [];
 }
 
-async function openNextTodo(controller: ReviewController, afterPath?: string): Promise<void> {
+/**
+ * Opens the next file to review in the commit in review. With `otherCommits` (the Next to do
+ * command), moves on to the next commit with files left once this one is done.
+ */
+async function openNextTodo(controller: ReviewController, afterPath?: string, otherCommits = false): Promise<void> {
   const model = controller.review;
-  const commitId = model?.state.session.currentCommitId;
-  if (!model || !commitId) {
+  const commitId = model?.state.session.currentCommitId ?? null;
+  if (!model || (!commitId && !otherCommits)) {
     return;
   }
-  const next = model.nextTodo(commitId, afterPath);
-  if (!next) {
-    void vscode.window.showInformationMessage('All files in this commit are done. Approve it when ready.');
+  const next = commitId ? model.nextTodo(commitId, afterPath) : null;
+  if (next) {
+    await controller.openDiff(next.path);
     return;
   }
-  await controller.openDiff(next.path);
+  const elsewhere = otherCommits ? model.nextTodoInOtherCommit(commitId) : null;
+  if (!elsewhere?.commitId) {
+    void vscode.window.showInformationMessage(
+      commitId ? 'All files in this commit are done. Approve it when ready.' : 'Every planned file is approved.',
+    );
+    return;
+  }
+  await controller.openDiff(elsewhere.path);
+  await controller.startCommit(elsewhere.commitId);
+  if (commitId) {
+    // The commit left behind is approved but not committed yet: say so, so it isn't forgotten.
+    const done = model.getCommit(commitId);
+    const target = model.getCommit(elsewhere.commitId);
+    void vscode.window.showInformationMessage(
+      `Commit ${done.order} is approved; it isn't committed yet. Moved on to commit ${target.order}: ${target.message.split('\n')[0]}.`,
+    );
+  }
 }

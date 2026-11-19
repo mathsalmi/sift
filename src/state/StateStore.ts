@@ -83,7 +83,7 @@ function toSaved(state: ReviewState): unknown {
   return {
     ...state,
     version: 2,
-    commits: state.commits.map(({ status: _status, sha: _sha, ...decision }) => decision),
+    commits: state.commits.map(({ status: _status, sha: _sha, pushed: _pushed, revertedBy: _revertedBy, ...decision }) => decision),
     files: state.files.map(({ changeType: _type, adds: _adds, dels: _dels, binary: _binary, ...decision }) => decision),
   };
 }
@@ -99,6 +99,8 @@ function withDefaults(state: ReviewState): ReviewState {
       commit.status = commit.id === state.session.currentCommitId ? 'in-review' : 'planned';
       delete commit.sha;
     }
+    delete commit.pushed;
+    delete commit.revertedBy;
   }
   for (const file of state.files) {
     file.changeType = file.changeType ?? 'modified';

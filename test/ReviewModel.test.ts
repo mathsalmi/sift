@@ -449,3 +449,60 @@ describe('comment threads', () => {
     expect(m.getThread(one.id).messages[1]).toMatchObject({ author: 'ai', model: 'GPT' });
   });
 });
+
+describe('dependencies between commits', () => {
+  function planned() {
+    const m = model();
+    m.applyPlan({
+      commits: [
+        { message: 'One', files: ['a.ts'] },
+        { message: 'Two', files: ['b.ts'], dependsOn: [1] },
+        { message: 'Three', files: ['c.ts'] },
+      ],
+    });
+    return { m, ids: m.commitsInOrder().map((c) => c.id) };
+  }
+
+  it('takes dependsOn from the plan and only allows earlier commits', () => {
+    const { m, ids } = planned();
+    expect(m.getCommit(ids[1]).dependsOn).toEqual([ids[0]]);
+    expect(() => m.applyPlan({ commits: [{ message: 'X', files: ['a.ts'], dependsOn: [1] }] })).toThrow(/only depend on commits before it/);
+  });
+
+  it('never moves a commit ahead of one it builds on', () => {
+    const { m, ids } = planned();
+    expect(() => m.moveCommit(ids[1], -1)).toThrow(/builds on "One"/);
+    expect(() => m.moveCommit(ids[0], 1)).toThrow(/builds on "One"/);
+    m.moveCommit(ids[2], -1);
+    expect(m.commitsInOrder().map((c) => c.id)).toEqual([ids[0], ids[2], ids[1]]);
+    expect(() => m.setDependencies(ids[0], [ids[2]])).toThrow(/only build on commits before it/);
+  });
+
+  it('commits approved commits whose dependencies come first, and a target with its dependencies', () => {
+    const { m, ids } = planned();
+    m.setStatus(['b.ts', 'c.ts'], 'done');
+    // Two waits for One, which is not approved; Three stands alone.
+    expect(m.commitBatch().map((c) => c.id)).toEqual([ids[2]]);
+    expect(m.commitBatch(ids[1]).map((c) => c.id)).toEqual([ids[0], ids[1]]);
+    expect(m.commitBlocker(ids[1])).toMatch(/not committed yet/);
+    expect(m.commitBlocker(ids[1], new Set([ids[0]]))).toBeNull();
+    m.setStatus(['a.ts'], 'done');
+    expect(m.commitBatch().map((c) => c.id)).toEqual(ids);
+  });
+
+  it('moves a commit made ahead of planned ones up to the commits already made', () => {
+    const { m, ids } = planned();
+    m.markCommitted(ids[2], 'sha3');
+    expect(m.commitsInOrder().map((c) => [c.id, c.order])).toEqual([
+      [ids[2], 1],
+      [ids[0], 2],
+      [ids[1], 3],
+    ]);
+  });
+
+  it('deleting a commit removes it from the commits that built on it', () => {
+    const { m, ids } = planned();
+    m.deleteCommit(ids[0]);
+    expect(m.getCommit(ids[1]).dependsOn).toBeUndefined();
+  });
+});

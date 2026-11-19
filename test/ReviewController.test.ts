@@ -366,4 +366,54 @@ describe('plan file pickup', () => {
     expect(await controller.checkPlanFile()).toEqual({ result: 'none' });
     expect(controller.review).toBeNull();
   });
+
+  it('commits every approved commit, undoes a local one and reverts a pushed one', async () => {
+    const remote = createRepo();
+    repo.git('remote', 'add', 'origin', remote.dir);
+    repo.write('src/a.ts', 'a changed\n');
+    repo.write('src/b.ts', 'b changed\n');
+    repo.write('src/c.ts', 'c new\n');
+    await controller.startReview();
+    writePlan({
+      commits: [
+        { message: 'Change a', files: ['src/a.ts'] },
+        { message: 'Change b', files: ['src/b.ts'], dependsOn: [1] },
+        { message: 'Add c', files: ['src/c.ts'] },
+      ],
+    });
+    await controller.loadPlan();
+    const model = controller.review!;
+    const [a, b, c] = model.commitsInOrder();
+    await controller.setStatus(['src/b.ts', 'src/c.ts'], 'done');
+
+    // b waits for a, which is not approved: only c is committed, and it moves up.
+    expect(model.commitBatch().map((x) => x.id)).toEqual([c.id]);
+    await controller.commitCommits([c.id]);
+    expect(model.commitsInOrder().map((x) => x.id)).toEqual([c.id, a.id, b.id]);
+    await expect(controller.commitCommits([b.id])).rejects.toThrow(/builds on "Change a"/);
+    // Unapproved files go in only when asked for.
+    await expect(controller.commitCommits([a.id, b.id])).rejects.toThrow(/not approved yet/);
+    await controller.commitCommits([a.id, b.id], { allowUnapproved: true });
+    expect(repo.git('log', '--format=%s', '-3')).toBe('Change b\nChange a\nAdd c\n');
+    expect(model.getCommit(b.id)).toMatchObject({ status: 'committed', pushed: false });
+
+    // Undo a: b, made after it, comes back too, approvals kept.
+    expect((await controller.commitsUndoneWith(a.id)).map((x) => x.subject)).toEqual(['Change b']);
+    await controller.undoCommit(a.id);
+    expect(model.getCommit(a.id).status).toBe('planned');
+    expect(model.getCommit(b.id).status).toBe('planned');
+    expect(model.findFile('src/b.ts')?.status).toBe('done');
+    expect(repo.git('log', '--format=%s', '-1')).toBe('Add c\n');
+
+    // Once pushed, c can't be undone, only reverted.
+    repo.git('push', '-q', 'origin', 'HEAD:refs/heads/feature');
+    repo.git('fetch', '-q', 'origin');
+    await controller.refresh();
+    expect(model.getCommit(c.id).pushed).toBe(true);
+    await expect(controller.undoCommit(c.id)).rejects.toThrow(/was pushed/);
+    const revert = await controller.revertCommit(c.id);
+    expect(model.getCommit(c.id)).toMatchObject({ status: 'committed', revertedBy: revert });
+    expect(repo.git('log', '--format=%s', '-1')).toMatch(/^Revert "Add c"/);
+    remote.cleanup();
+  });
 });

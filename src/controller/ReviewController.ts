@@ -2,12 +2,25 @@ import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
 import * as vscode from 'vscode';
-import { emptyOutcome, ReviewModel, type SyncOutcome } from '../core/ReviewModel';
+import { emptyOutcome, ReviewModel, subjectOf, type SyncOutcome } from '../core/ReviewModel';
 import { excludedEntries, ignorePaths, trackedPaths, unexcludePatterns, type ExcludeEntry, type IgnoreTarget } from '../git/ignore';
 import type { FileStatus, IterationAuthor, PlanInput, ReviewThread } from '../core/types';
 import type { GitRunner } from '../git/GitRunner';
 import { commitChanges, commitPaths, currentHead, fileDiff, hasStagedChanges, listChanges, operationInProgress } from '../git/changes';
-import { blobHashes, DELETED_BLOB, hasBlob, inHeadHistory, keepBlobs, lastTouches, readCommitRefs, setCommitRef } from '../git/history';
+import {
+  blobHashes,
+  commitsAfter,
+  DELETED_BLOB,
+  hasBlob,
+  inHeadHistory,
+  isPushed,
+  keepBlobs,
+  lastTouches,
+  readCommitRefs,
+  revertCommit,
+  setCommitRef,
+  undoCommits,
+} from '../git/history';
 import { type SnapshotService, sessionRefPrefix, snapshotRef } from '../git/SnapshotService';
 import { excludeStateDir, type StateStore } from '../state/StateStore';
 import { SCHEME, snapshotUri } from '../ui/SnapshotContentProvider';
@@ -27,6 +40,8 @@ export class ReviewController implements vscode.Disposable {
   private model: ReviewModel | null = null;
   /** What each git commit changed; commits never change, so this never goes stale. */
   private readonly commitChangesCache = new Map<string, Awaited<ReturnType<typeof commitChanges>>>();
+  /** Commits a remote branch has; once pushed, a commit stays pushed. */
+  private readonly pushedCache = new Set<string>();
   private readonly changed = new vscode.EventEmitter<void>();
   readonly onDidChange = this.changed.event;
 
@@ -172,6 +187,15 @@ export class ReviewController implements vscode.Disposable {
     for (const [commitId, sha] of outcome.refs) {
       await setCommitRef(this.git, sessionId, commitId, sha);
     }
+    const reverts = await readCommitRefs(this.git, sessionId, 'revert');
+    for (const commit of model.state.commits) {
+      const revert = commit.status === 'committed' ? reverts.get(commit.id) : undefined;
+      commit.revertedBy = revert && (await inHeadHistory(this.git, revert)) ? revert : undefined;
+      if (revert && !commit.revertedBy) {
+        await setCommitRef(this.git, sessionId, commit.id, null, 'revert'); // the revert was undone
+      }
+      commit.pushed = commit.status === 'committed' && commit.sha ? await this.isPushed(commit.sha) : undefined;
+    }
     for (const commit of model.state.commits) {
       if (commit.status === 'committed' && commit.sha) {
         let changed = this.commitChangesCache.get(commit.sha);
@@ -183,6 +207,17 @@ export class ReviewController implements vscode.Disposable {
       }
     }
     return outcome;
+  }
+
+  private async isPushed(sha: string): Promise<boolean> {
+    if (this.pushedCache.has(sha)) {
+      return true;
+    }
+    const pushed = await isPushed(this.git, sha);
+    if (pushed) {
+      this.pushedCache.add(sha);
+    }
+    return pushed;
   }
 
   /** Git-tracked files among `paths`: adding them to an ignore file would not hide their changes. */
@@ -305,6 +340,11 @@ export class ReviewController implements vscode.Disposable {
     await this.persist();
   }
 
+  async setDependencies(commitId: string, dependencyIds: string[]): Promise<void> {
+    this.require().setDependencies(commitId, dependencyIds);
+    await this.persist();
+  }
+
   async moveFiles(paths: string[], commitId: string | null): Promise<void> {
     this.require().moveFiles(paths, commitId);
     await this.persist();
@@ -347,37 +387,132 @@ export class ReviewController implements vscode.Disposable {
     await this.persist();
   }
 
-  async approveCurrent(): Promise<{ sha: string; nextCommitId: string | null }> {
+  /**
+   * Commits the planned commits, in the order given (each one's dependencies first). Commits with
+   * files not approved yet are refused unless `allowUnapproved`. When the commit in review was
+   * committed, the next planned commit goes into review.
+   */
+  async commitCommits(
+    commitIds: string[],
+    options: { allowUnapproved?: boolean } = {},
+  ): Promise<{ shas: string[]; nextCommitId: string | null }> {
     const model = this.require();
     // Catch up with git first: commits made outside Sift, files changed since they were approved.
     const outcome = await this.sync(model);
-    const commit = model.currentCommit();
-    if (!commit) {
+    const ids = commitIds.filter((id) => model.state.commits.some((c) => c.id === id && c.status !== 'committed'));
+    if (ids.length === 0) {
       await this.persist();
-      throw new Error(
-        outcome.committedOutside.length > 0 ? 'This commit was already committed outside Sift.' : 'No commit is in review.',
-      );
+      throw new Error(outcome.committedOutside.length > 0 ? 'Already committed outside Sift.' : 'There is nothing to commit.');
     }
-    const blocker = model.approvalBlocker(commit.id);
-    if (blocker) {
-      await this.persist();
-      throw new Error(outcome.unapproved.length > 0 ? `${blocker} Some changed after you approved them.` : blocker);
+    const before = new Set<string>();
+    for (const id of ids) {
+      const unapproved = options.allowUnapproved ? 0 : model.unapprovedCount(id);
+      const blocker =
+        model.commitBlocker(id, before) ??
+        (unapproved > 0 ? `${unapproved} file(s) in "${subjectOf(model.getCommit(id))}" are not approved yet.` : null);
+      if (blocker) {
+        await this.persist();
+        throw new Error(outcome.unapproved.length > 0 ? `${blocker} Some files changed after you approved them.` : blocker);
+      }
+      before.add(id);
     }
 
-    const paths = model.filesOf(commit.id).map((f) => f.path);
-    const sha = await commitPaths(this.git, paths, commit.message);
-    await setCommitRef(this.git, model.state.session.id, commit.id, sha);
-    model.markCommitted(commit.id, sha);
-    await this.sync(model);
-    const next = model.commitsInOrder().find((c) => c.status !== 'committed') ?? null;
-    if (next) {
-      model.startCommit(next.id);
-      if (!model.latestIteration(next.id)) {
-        await this.snapshot(next.id, 'initial', true);
+    const current = model.state.session.currentCommitId;
+    const shas: string[] = [];
+    try {
+      for (const id of ids) {
+        const commit = model.getCommit(id);
+        const sha = await commitPaths(this.git, model.filesOf(id).map((f) => f.path), commit.message);
+        await setCommitRef(this.git, model.state.session.id, id, sha);
+        model.markCommitted(id, sha);
+        shas.push(sha);
+      }
+    } finally {
+      await this.sync(model);
+      await this.persist();
+    }
+    let next: string | null = model.state.session.currentCommitId;
+    if (!next && current && ids.includes(current)) {
+      next = model.commitsInOrder().find((c) => c.status !== 'committed')?.id ?? null;
+      if (next) {
+        model.startCommit(next);
+        if (!model.latestIteration(next)) {
+          await this.snapshot(next, 'initial', true);
+        }
       }
     }
     await this.persist();
-    return { sha, nextCommitId: next?.id ?? null };
+    return { shas, nextCommitId: next };
+  }
+
+  /** Commits the commit in review, which must be approved. */
+  async approveCurrent(): Promise<{ sha: string; nextCommitId: string | null }> {
+    const current = this.require().currentCommit();
+    if (!current) {
+      await this.sync(this.require());
+      throw new Error('No commit is in review.');
+    }
+    const { shas, nextCommitId } = await this.commitCommits([current.id]);
+    return { sha: shas[0], nextCommitId };
+  }
+
+  /** The git commits that undoing this planned commit would undo too (made on top of it), newest first. */
+  async commitsUndoneWith(commitId: string): Promise<Array<{ sha: string; subject: string }>> {
+    const commit = this.require().getCommit(commitId);
+    return commit.sha ? commitsAfter(this.git, commit.sha) : [];
+  }
+
+  /**
+   * Undoes a commit that was not pushed: it, and every commit made after it, go back to the plan
+   * as uncommitted changes, keeping their approvals.
+   */
+  async undoCommit(commitId: string): Promise<void> {
+    const model = this.require();
+    const commit = model.getCommit(commitId);
+    if (commit.status !== 'committed' || !commit.sha) {
+      throw new Error(`"${subjectOf(commit)}" is not committed.`);
+    }
+    const operation = await operationInProgress(this.git);
+    if (operation) {
+      throw new Error(`Finish ${operation} first.`);
+    }
+    if (!(await inHeadHistory(this.git, commit.sha))) {
+      throw new Error(`"${subjectOf(commit)}" is not in the current branch's history.`);
+    }
+    if (await this.isPushed(commit.sha)) {
+      throw new Error(`"${subjectOf(commit)}" was pushed. Revert it instead.`);
+    }
+    await undoCommits(this.git, commit.sha);
+    await this.sync(model);
+    await this.persist();
+  }
+
+  /** Makes a new commit that undoes a committed one (the way to take back a pushed commit). */
+  async revertCommit(commitId: string): Promise<string> {
+    const model = this.require();
+    const commit = model.getCommit(commitId);
+    if (commit.status !== 'committed' || !commit.sha) {
+      throw new Error(`"${subjectOf(commit)}" is not committed.`);
+    }
+    if (commit.revertedBy) {
+      throw new Error(`"${subjectOf(commit)}" is already reverted.`);
+    }
+    const operation = await operationInProgress(this.git);
+    if (operation) {
+      throw new Error(`Finish ${operation} first.`);
+    }
+    if (await hasStagedChanges(this.git)) {
+      throw new Error('The index has staged changes. Unstage them (git restore --staged .) first.');
+    }
+    const kept = model.dependentsOf(commitId).filter((c) => c.status === 'committed' && !c.revertedBy);
+    if (kept.length > 0) {
+      throw new Error(`"${subjectOf(kept[0])}" builds on "${subjectOf(commit)}". Revert it first.`);
+    }
+    const sha = await revertCommit(this.git, commit.sha);
+    await setCommitRef(this.git, model.state.session.id, commitId, sha, 'revert');
+    await this.sync(model);
+    await this.persist();
+    return sha;
   }
 
   // ---- plan from the AI ----

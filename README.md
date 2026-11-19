@@ -22,7 +22,12 @@ When an AI (or you) changes hundreds of files in one go, reviewing a single gian
 - **Files as a list or a tree:** switch with the list/tree button in the view title, like the Source Control view. Collapse or expand everything with the button next to it.
 - **Locally excluded files:** a **Locally excluded** group at the end of the plan lists the rules in `.git/info/exclude` (except Sift's own `.sift/`). Click a file to open it; **Remove from .git/info/exclude** (eye button or right-click) brings its changes back into the review. Edits to the file by hand show up right away.
 - **Group by status:** the group button in the view title splits each commit's files into **To do**, **In progress** and **Approved**. Off by default.
-- **Hide approved files:** the eye button in the view title hides files as soon as you approve them, so only what's left to review stays in view; commits with nothing left disappear too. If that empties the view, it offers what's next: **Commit** or **Commit and push** the approved commits, **Push** once everything is committed, or show the approved files again. Approved files are shown by default.
+- **Hide approved files:** the eye button in the view title hides files as soon as you approve them, so only what's left to review stays in view. Planned commits stay listed even when all their files are hidden. Approved files are shown by default.
+- **Hide committed commits:** in the view title's **…** menu, separate from approved files. Committed commits are shown by default, marked **Committed** (not pushed yet), **Pushed** or **Reverted**.
+- **Filter files:** the filter button in the view title narrows the plan to files whose path fuzzy-matches what you type (`ctrl rev` finds `src/controller/ReviewController.ts`). Escape puts the previous filter back; the ✕ button clears it.
+- **Commit everything approved:** the ✓ button in the view title commits every approved commit, in plan order, without asking. It asks only when it would commit files you haven't approved: when nothing is approved yet it offers the commit in review. **Commit and push** is in the **…** menu, and **Push** appears once commits wait to be pushed.
+- **Dependencies:** a commit can build on earlier ones (**Set the commits it builds on…** on a commit, or `dependsOn` from the AI). Sift then never moves it above them or commits it before them; committing it commits them first. Independent approved commits can be committed ahead of unapproved ones.
+- **Undo or revert:** a committed commit not pushed yet has **Undo commit**: its changes (and those of any commit made after it) go back to the working tree and the plan, approvals kept. A pushed commit has **Revert commit**, which makes a new commit that undoes it.
 - **Review status:** files are reviewed as part of a commit: unassigned ones have no checkbox until you move them into one. Tick a file's checkbox to approve it. Sift asks first when the file still has unresolved comments. A commit is **To do** until one file is approved, **In progress** while some are, and **Approved** when all are. Files that change after you approved them go back to In progress.
 - **You stay in control:** the AI never stages or commits. Only your Approve click commits, with your git identity and hooks.
 
@@ -60,7 +65,7 @@ Then run **Developer: Reload Window**.
    - **Ask AI** sends it now; the answer appears in the thread (stop it with ⏹).
    - **Add (ask later)** queues it; ask about all queued comments with ✨ in the editor title (**Cmd+Alt+Enter**).
 5. Approve each file: tick its checkbox in the tree, or click **✓** in the diff editor (**Cmd+Alt+D**).
-6. When the commit is approved, click **Approve and commit**. The next commit goes into review.
+6. When the commit is approved, click ✓ in the view title: every approved commit gets committed. The next commit goes into review.
 7. When every commit is done, push.
 
 Safety tip: create a backup branch before a big review: `git branch backup/$(date +%Y%m%d-%H%M)`.
@@ -114,6 +119,7 @@ Sift also picks up `.sift/plan.json` whenever it is written, by hand or by anoth
 
 - Every path must be a changed file, listed once. Unlisted files stay in **Unassigned**.
 - `explanations` are optional; each `path` must be one of the commit's files, `line` is 1-based.
+- `dependsOn` is optional: 1-based positions of earlier commits in the plan that this one builds on.
 - A new plan replaces commits that aren't committed yet.
 
 ## Commands and keys

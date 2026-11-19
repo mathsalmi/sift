@@ -43,18 +43,18 @@
       },
       {
         "view": "sift.plan",
-        "contents": "Every file is approved, and approved files are hidden.\n[$(git-commit) Commit](command:sift.commitApproved)\n[$(cloud-upload) Commit and push](command:sift.commitApprovedAndPush)\n[$(eye) Show approved files](command:sift.showDone)",
-        "when": "sift.active && sift.hideDone && sift.readyToCommit"
+        "contents": "No file matches the filter.\n[$(close) Clear filter](command:sift.clearFilter)",
+        "when": "sift.active && sift.filtering"
       },
       {
         "view": "sift.plan",
-        "contents": "Everything is committed, and approved files are hidden.\n[$(cloud-upload) Push](command:sift.push)\n[$(eye) Show approved files](command:sift.showDone)",
-        "when": "sift.active && sift.hideDone && !sift.readyToCommit && sift.unpushed"
+        "contents": "Everything is committed, and committed commits are hidden.\n[$(cloud-upload) Push](command:sift.push)\n[$(eye) Show committed commits](command:sift.showCommitted)",
+        "when": "sift.active && !sift.filtering && sift.hideCommitted && sift.unpushed"
       },
       {
         "view": "sift.plan",
-        "contents": "Every file is approved, and approved files are hidden.\n[$(eye) Show approved files](command:sift.showDone)",
-        "when": "sift.active && sift.hideDone && !sift.readyToCommit && !sift.unpushed"
+        "contents": "Everything is committed, and committed commits are hidden.\n[$(eye) Show committed commits](command:sift.showCommitted)",
+        "when": "sift.active && !sift.filtering && sift.hideCommitted && !sift.unpushed"
       }
     ],
     "commands": [
@@ -194,15 +194,15 @@
       },
       {
         "command": "sift.approveCommit",
-        "title": "Approve and commit",
+        "title": "Commit",
         "category": "Sift",
-        "icon": "$(check)"
+        "icon": "$(git-commit)"
       },
       {
         "command": "sift.commitApproved",
         "title": "Commit approved commits",
         "category": "Sift",
-        "icon": "$(git-commit)"
+        "icon": "$(check)"
       },
       {
         "command": "sift.commitApprovedAndPush",
@@ -215,6 +215,54 @@
         "title": "Push",
         "category": "Sift",
         "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "sift.setDependencies",
+        "title": "Set the commits it builds on…",
+        "category": "Sift",
+        "icon": "$(references)"
+      },
+      {
+        "command": "sift.undoCommit",
+        "title": "Undo commit",
+        "category": "Sift",
+        "icon": "$(discard)"
+      },
+      {
+        "command": "sift.revertCommit",
+        "title": "Revert commit",
+        "category": "Sift",
+        "icon": "$(history)"
+      },
+      {
+        "command": "sift.hideCommitted",
+        "title": "Hide committed commits",
+        "category": "Sift",
+        "icon": "$(git-commit)"
+      },
+      {
+        "command": "sift.showCommitted",
+        "title": "Show committed commits",
+        "category": "Sift",
+        "icon": "$(git-commit)"
+      },
+      {
+        "command": "sift.filterFiles",
+        "title": "Filter files…",
+        "category": "Sift",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "sift.editFilter",
+        "title": "Change the file filter…",
+        "category": "Sift",
+        "icon": "$(filter-filled)"
+      },
+      {
+        "command": "sift.clearFilter",
+        "title": "Clear file filter",
+        "category": "Sift",
+        "icon": "$(close)"
       },
       {
         "command": "sift.abort",
@@ -460,6 +508,14 @@
                         "body"
                       ]
                     }
+                  },
+                  "dependsOn": {
+                    "type": "array",
+                    "items": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "description": "1-based positions of earlier commits in this plan that this commit needs (it uses what they add). Sift then never commits or moves it before them. Leave out for commits that stand alone."
                   }
                 },
                 "required": [
@@ -549,7 +605,7 @@
           "group": "navigation@2"
         },
         {
-          "command": "sift.approveCommit",
+          "command": "sift.commitApproved",
           "when": "view == sift.plan && sift.active",
           "group": "navigation@4"
         },
@@ -607,6 +663,41 @@
           "command": "sift.expandAll",
           "when": "view == sift.plan && sift.active && sift.treeCollapsed",
           "group": "navigation@9"
+        },
+        {
+          "command": "sift.push",
+          "when": "view == sift.plan && sift.active && sift.unpushed && !sift.readyToCommit",
+          "group": "navigation@4"
+        },
+        {
+          "command": "sift.filterFiles",
+          "when": "view == sift.plan && sift.active && !sift.filtering",
+          "group": "navigation@1"
+        },
+        {
+          "command": "sift.editFilter",
+          "when": "view == sift.plan && sift.active && sift.filtering",
+          "group": "navigation@1"
+        },
+        {
+          "command": "sift.clearFilter",
+          "when": "view == sift.plan && sift.active && sift.filtering",
+          "group": "navigation@1"
+        },
+        {
+          "command": "sift.commitApprovedAndPush",
+          "when": "view == sift.plan && sift.active",
+          "group": "1_ship@1"
+        },
+        {
+          "command": "sift.hideCommitted",
+          "when": "view == sift.plan && sift.active && !sift.hideCommitted",
+          "group": "2_view@1"
+        },
+        {
+          "command": "sift.showCommitted",
+          "when": "view == sift.plan && sift.active && sift.hideCommitted",
+          "group": "2_view@1"
         }
       ],
       "view/item/context": [
@@ -684,6 +775,31 @@
           "command": "sift.moveToCommit",
           "when": "viewItem =~ /^file-(todo|in-progress|done|unassigned)$/",
           "group": "2@1"
+        },
+        {
+          "command": "sift.setDependencies",
+          "when": "view == sift.plan && viewItem =~ /^commit(-current)?$/",
+          "group": "2@3"
+        },
+        {
+          "command": "sift.undoCommit",
+          "when": "view == sift.plan && viewItem == commit-committed-local",
+          "group": "inline"
+        },
+        {
+          "command": "sift.undoCommit",
+          "when": "view == sift.plan && viewItem == commit-committed-local",
+          "group": "1@1"
+        },
+        {
+          "command": "sift.revertCommit",
+          "when": "view == sift.plan && viewItem =~ /^commit-committed-(local|pushed)$/",
+          "group": "1@2"
+        },
+        {
+          "command": "sift.revertCommit",
+          "when": "view == sift.plan && viewItem == commit-committed-pushed",
+          "group": "inline"
         }
       ],
       "editor/title": [
@@ -731,11 +847,11 @@
       "commandPalette": [
         {
           "command": "sift.commitApproved",
-          "when": "sift.active && sift.readyToCommit"
+          "when": "sift.active"
         },
         {
           "command": "sift.commitApprovedAndPush",
-          "when": "sift.active && sift.readyToCommit"
+          "when": "sift.active"
         },
         {
           "command": "sift.push",
@@ -836,6 +952,38 @@
         {
           "command": "sift.excludeFile",
           "when": "sift.active"
+        },
+        {
+          "command": "sift.setDependencies",
+          "when": "sift.active"
+        },
+        {
+          "command": "sift.undoCommit",
+          "when": "sift.active"
+        },
+        {
+          "command": "sift.revertCommit",
+          "when": "sift.active"
+        },
+        {
+          "command": "sift.hideCommitted",
+          "when": "sift.active && !sift.hideCommitted"
+        },
+        {
+          "command": "sift.showCommitted",
+          "when": "sift.active && sift.hideCommitted"
+        },
+        {
+          "command": "sift.filterFiles",
+          "when": "sift.active"
+        },
+        {
+          "command": "sift.editFilter",
+          "when": "false"
+        },
+        {
+          "command": "sift.clearFilter",
+          "when": "sift.active && sift.filtering"
         }
       ],
       "comments/commentThread/context": [

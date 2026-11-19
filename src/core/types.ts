@@ -31,6 +31,15 @@ export interface PlanCommit {
   status: CommitStatus;
   /** Derived, never saved: the git commit it became (recorded in a private ref, see git/history.ts). */
   sha?: string;
+  /** Derived, never saved: a remote branch has the commit, so it can be reverted but not undone. */
+  pushed?: boolean;
+  /** Derived, never saved: the git commit that reverted it (recorded in a private ref, see git/history.ts). */
+  revertedBy?: string;
+  /**
+   * Planned commits this one builds on. They must come before it in the plan and be committed
+   * first; reordering never puts it ahead of them.
+   */
+  dependsOn?: string[];
 }
 
 export interface ReviewFile {
@@ -122,5 +131,7 @@ export interface PlanInput {
     riskNotes?: string[];
     files: string[];
     explanations?: PlanExplanation[];
+    /** 1-based positions of earlier commits in this plan that this one builds on. */
+    dependsOn?: number[];
   }>;
 }

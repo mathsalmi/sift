@@ -52,7 +52,12 @@ export class PlanTree implements vscode.TreeDataProvider<PlanNode>, vscode.TreeD
         roots.push({ kind: 'unassigned' });
       }
       for (const commit of model.commitsInOrder()) {
-        if (this.options.showDone || this.options.visible(model.filesOf(commit.id)).length > 0) {
+        const committed = commit.status === 'committed';
+        if (committed && !this.options.showCommitted) {
+          continue;
+        }
+        // Planned commits always show, even with all their files hidden, unless the filter leaves none.
+        if (!this.options.filter || this.options.visible(model.filesOf(commit.id), committed).length > 0) {
           roots.push({ kind: 'commit', commitId: commit.id });
         }
       }
@@ -68,7 +73,8 @@ export class PlanTree implements vscode.TreeDataProvider<PlanNode>, vscode.TreeD
       return [];
     }
     const commitId = node.kind === 'unassigned' ? null : node.commitId;
-    let files = this.options.visible(model.filesOf(commitId));
+    const committed = commitId !== null && model.getCommit(commitId).status === 'committed';
+    let files = this.options.visible(model.filesOf(commitId), committed);
     if (this.options.groupByStatus && node.kind === 'commit') {
       return STATUS_GROUPS.filter((g) => files.some((f) => f.status === g.status)).map((g) => ({
         kind: 'status',
@@ -206,11 +212,12 @@ export class PlanTree implements vscode.TreeDataProvider<PlanNode>, vscode.TreeD
   private commitItem(commit: PlanCommit, files: ReviewFile[]): vscode.TreeItem {
     const model = this.controller.review;
     const isCurrent = model?.state.session.currentCommitId === commit.id;
+    const committed = commit.status === 'committed';
     const approved = files.filter((f) => f.status === 'done').length;
     const status = model?.commitReviewStatus(commit.id) ?? 'todo';
     // A commit whose files are all hidden (approved) has nothing to expand.
     const state =
-      this.options.visible(files).length === 0
+      this.options.visible(files, committed).length === 0
         ? vscode.TreeItemCollapsibleState.None
         : this.options.state(isCurrent ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed);
     const title = `${commit.order}. ${commit.message.split('\n')[0]}`;
@@ -218,12 +225,21 @@ export class PlanTree implements vscode.TreeDataProvider<PlanNode>, vscode.TreeD
     const item = new vscode.TreeItem(isCurrent ? { label: title, highlights: [[0, title.length]] } : title, state);
     item.id = this.options.id(`commit:${commit.id}`);
     item.iconPath = commitIcon(status);
+    const dependencies = model?.dependenciesOf(commit.id) ?? [];
 
-    if (commit.status === 'committed') {
-      item.description = `Committed ${commit.sha?.slice(0, 7) ?? ''}`;
-      item.contextValue = 'commit-committed';
+    const short = (sha?: string) => sha?.slice(0, 7) ?? '';
+    if (committed && commit.revertedBy) {
+      item.description = `Reverted by ${short(commit.revertedBy)}`;
+      item.iconPath = new vscode.ThemeIcon('discard', new vscode.ThemeColor('disabledForeground'));
+      item.contextValue = 'commit-committed-reverted';
+    } else if (committed) {
+      item.description = `${commit.pushed ? 'Pushed' : 'Committed'} ${short(commit.sha)}`;
+      item.contextValue = commit.pushed ? 'commit-committed-pushed' : 'commit-committed-local';
     } else {
       const parts = [COMMIT_STATUS_LABEL[status], `${approved}/${files.length} approved`];
+      if (dependencies.length > 0) {
+        parts.push(`after ${dependencies.map((d) => d.order).join(', ')}`);
+      }
       if (isCurrent) {
         parts.push('in review');
       }
@@ -233,12 +249,25 @@ export class PlanTree implements vscode.TreeDataProvider<PlanNode>, vscode.TreeD
 
     const tooltip = new vscode.MarkdownString();
     tooltip.appendMarkdown(`**${escape(commit.message)}**\n\n`);
-    tooltip.appendMarkdown(`*${COMMIT_STATUS_LABEL[status]}* · ${approved}/${files.length} file(s) approved\n\n`);
+    if (committed) {
+      const state = commit.revertedBy
+        ? `Reverted by ${short(commit.revertedBy)}`
+        : `${commit.pushed ? 'Pushed' : 'Committed, not pushed yet'}`;
+      tooltip.appendMarkdown(`*${state}* · ${short(commit.sha)} · ${files.length} file(s)\n\n`);
+    } else {
+      tooltip.appendMarkdown(`*${COMMIT_STATUS_LABEL[status]}* · ${approved}/${files.length} file(s) approved\n\n`);
+    }
     if (commit.intent) {
       tooltip.appendMarkdown(`${escape(commit.intent)}\n\n`);
     }
     for (const note of commit.riskNotes) {
       tooltip.appendMarkdown(`- ⚠ ${escape(note)}\n`);
+    }
+    if (dependencies.length > 0) {
+      tooltip.appendMarkdown(`\nBuilds on:\n`);
+      for (const dependency of dependencies) {
+        tooltip.appendMarkdown(`- ${dependency.order}. ${escape(dependency.message.split('\n')[0])}\n`);
+      }
     }
     item.tooltip = tooltip;
     return item;

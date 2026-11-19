@@ -53,3 +53,27 @@ describe('PlanTree grouped by status', () => {
     expect(tree.getChildren(commit).map((n) => (n as { status: string }).status)).toEqual(['todo', 'in-progress']);
   });
 });
+
+describe('PlanTree visibility', () => {
+  it('hides committed commits apart from approved files, and filters files by fuzzy path', async () => {
+    const { tree, options, commit, commitId } = setup();
+    const model = (tree as unknown as { controller: { review: ReviewModel } }).controller.review;
+    model.setStatus(['src/a.ts', 'c.ts'], 'done');
+    // Approved but not committed: hiding approved files keeps the commit listed.
+    await options.setShowDone(false);
+    expect(tree.getChildren()).toEqual([commit]);
+    expect(tree.getChildren(commit)).toEqual([]);
+
+    model.markCommitted(commitId, 'sha1');
+    await options.setShowDone(true);
+    expect(tree.getChildren()).toEqual([commit]);
+    await options.setShowCommitted(false);
+    expect(tree.getChildren()).toEqual([]);
+    await options.setShowCommitted(true);
+
+    await options.setFilter('sr b');
+    expect(tree.getChildren(commit)).toEqual([{ kind: 'file', path: 'src/b.ts', commitId }]);
+    await options.setFilter('zzz');
+    expect(tree.getChildren()).toEqual([]);
+  });
+});

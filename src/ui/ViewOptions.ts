@@ -1,16 +1,19 @@
 import * as vscode from 'vscode';
+import { fuzzyMatch } from './fuzzy';
 
 export type ExpandMode = 'default' | 'all' | 'none';
 
 /**
  * How the Plan view shows files: as a list or nested in folders, grouped by status or not, with or
- * without approved files, and the last "collapse all" / "expand all". All but the last are remembered.
+ * without approved files and committed commits, filtered or not, and the last "collapse all" /
+ * "expand all". The filter and the last are not remembered.
  */
 export class ViewOptions implements vscode.Disposable {
   private readonly changed = new vscode.EventEmitter<void>();
   readonly onDidChange = this.changed.event;
 
   private expandMode: ExpandMode = 'default';
+  private filterText = '';
   /** Bumped on collapse/expand all: new item ids make VS Code use the new collapsible state. */
   private generation = 0;
 
@@ -43,9 +46,37 @@ export class ViewOptions implements vscode.Disposable {
     this.changed.fire();
   }
 
-  /** The files to list: all of them, or all but the approved ones. */
-  visible<F extends { status: string }>(files: F[]): F[] {
-    return this.showDone ? files : files.filter((f) => f.status !== 'done');
+  /** Whether commits already made are listed. */
+  get showCommitted(): boolean {
+    return this.memento.get<boolean>('sift.showCommitted', true);
+  }
+
+  async setShowCommitted(show: boolean): Promise<void> {
+    await this.memento.update('sift.showCommitted', show);
+    await this.updateContext();
+    this.changed.fire();
+  }
+
+  /** Fuzzy text the file paths must match; empty shows every file. */
+  get filter(): string {
+    return this.filterText;
+  }
+
+  async setFilter(text: string): Promise<void> {
+    const next = text.trim();
+    if (next === this.filterText) {
+      return;
+    }
+    this.filterText = next;
+    await this.updateContext();
+    this.changed.fire();
+  }
+
+  /** The files to list: those matching the filter, without the approved ones when they are hidden. */
+  visible<F extends { status: string; path: string }>(files: F[], committed = false): F[] {
+    return files.filter(
+      (f) => (committed || this.showDone || f.status !== 'done') && (!this.filterText || fuzzyMatch(this.filterText, f.path)),
+    );
   }
 
   /** Whether each commit's files are split into To do / In progress / Approved. */
@@ -72,7 +103,7 @@ export class ViewOptions implements vscode.Disposable {
 
   /** The state an item gets: `fallback` until the user collapses or expands everything. */
   state(fallback: vscode.TreeItemCollapsibleState): vscode.TreeItemCollapsibleState {
-    if (this.expandMode === 'all') {
+    if (this.expandMode === 'all' || (this.filterText && this.expandMode === 'default')) {
       return vscode.TreeItemCollapsibleState.Expanded;
     }
     if (this.expandMode === 'none') {
@@ -83,13 +114,17 @@ export class ViewOptions implements vscode.Disposable {
 
   /** Item id for collapsible items, so a collapse/expand all applies to items VS Code already knows. */
   id(base: string): string {
-    return this.generation === 0 ? base : `${base}~${this.generation}`;
+    // Filtering expands everything that matches: new ids, so VS Code takes the expanded state.
+    const suffix = `${this.generation === 0 ? '' : `~${this.generation}`}${this.filterText ? '~f' : ''}`;
+    return `${base}${suffix}`;
   }
 
   private async updateContext(): Promise<void> {
     await vscode.commands.executeCommand('setContext', 'sift.viewAsTree', this.asTree);
     await vscode.commands.executeCommand('setContext', 'sift.treeCollapsed', this.collapsed);
     await vscode.commands.executeCommand('setContext', 'sift.hideDone', !this.showDone);
+    await vscode.commands.executeCommand('setContext', 'sift.hideCommitted', !this.showCommitted);
+    await vscode.commands.executeCommand('setContext', 'sift.filtering', this.filterText !== '');
     await vscode.commands.executeCommand('setContext', 'sift.groupByStatus', this.groupByStatus);
   }
 }

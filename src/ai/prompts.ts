@@ -20,6 +20,11 @@ export const PLAN_SCHEMA = {
           intent: { type: 'string', description: 'What this commit does and why, 1-2 sentences, for the reviewer.' },
           riskNotes: { type: 'array', items: { type: 'string' }, description: 'Spots that deserve careful review.' },
           files: { type: 'array', items: { type: 'string' }, description: 'Repo-relative paths, exactly as listed.' },
+          dependsOn: {
+            type: 'array',
+            items: { type: 'integer', minimum: 1 },
+            description: '1-based positions of earlier commits in this plan that this commit needs. Empty when it stands alone.',
+          },
           explanations: {
             type: 'array',
             items: {
@@ -99,6 +104,7 @@ Rules:
 - message: imperative subject line (max 72 characters); add a body after a blank line only when it helps.
 - intent: what the commit does and why, in 1-2 sentences.
 - riskNotes: spots the reviewer should read carefully (can be empty).
+- dependsOn: the numbers (1-based, in your list) of earlier commits this one needs, e.g. it calls a function another commit adds. Sift never commits or moves it before them, so list real needs only; empty when the commit stands alone.
 - explanations: add a note on every line that carries intent or risk, saying what changed and why. Use the line numbers shown in the left column of the diffs (they are line numbers in the current file). Skip mechanical changes such as imports, renames or formatting. Max 3 short bullets per note.
 
 Changed files:

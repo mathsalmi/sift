@@ -100,7 +100,11 @@ async function reviewSummary(controller: ReviewController): Promise<unknown> {
       id: c.id,
       order: c.order,
       message: c.message,
-      status: c.status === 'committed' ? `committed ${c.sha?.slice(0, 7) ?? ''}`.trim() : model.commitReviewStatus(c.id),
+      status:
+        c.status === 'committed'
+          ? `${c.revertedBy ? 'reverted' : c.pushed ? 'pushed' : 'committed'} ${c.sha?.slice(0, 7) ?? ''}`.trim()
+          : model.commitReviewStatus(c.id),
+      buildsOn: model.dependenciesOf(c.id).map((d) => d.order),
       files: fileList(c.id),
     })),
     unassignedFiles: fileList(null),

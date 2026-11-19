@@ -1,6 +1,6 @@
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
-import type { GitRunner } from './GitRunner';
+import { GitError, type GitRunner } from './GitRunner';
 import { REF_ROOT } from './SnapshotService';
 
 /** Content id of a deleted file, for approvals of deletions. */
@@ -10,18 +10,21 @@ export const DELETED_BLOB = 'deleted';
  * The private ref that records which git commit a planned commit became. Lives next to the
  * session's snapshot refs, so "Discard plan" removes it with them. Nothing touches the commit message.
  */
-export function commitRef(sessionId: string, commitId: string): string {
-  return `${REF_ROOT}/${sessionId}/${commitId}/commit`;
+export function commitRef(sessionId: string, commitId: string, kind: CommitRefKind = 'commit'): string {
+  return `${REF_ROOT}/${sessionId}/${commitId}/${kind}`;
 }
 
-/** Planned commit id → the git commit its ref points to. */
-export async function readCommitRefs(git: GitRunner, sessionId: string): Promise<Map<string, string>> {
+/** commit: the git commit a planned commit became; revert: the git commit that reverted it. */
+export type CommitRefKind = 'commit' | 'revert';
+
+/** Planned commit id → the git commit its ref (of this kind) points to. */
+export async function readCommitRefs(git: GitRunner, sessionId: string, kind: CommitRefKind = 'commit'): Promise<Map<string, string>> {
   const prefix = `${REF_ROOT}/${sessionId}/`;
   const out = await git.run(['for-each-ref', '--format=%(refname) %(objectname)', prefix]);
   const refs = new Map<string, string>();
   for (const line of out.split('\n')) {
     const [name, sha] = line.trim().split(' ');
-    const match = name ? /^(.*)\/commit$/.exec(name.slice(prefix.length)) : null;
+    const match = name ? new RegExp(`^(.*)/${kind}$`).exec(name.slice(prefix.length)) : null;
     if (match && sha) {
       refs.set(match[1], sha);
     }
@@ -29,8 +32,14 @@ export async function readCommitRefs(git: GitRunner, sessionId: string): Promise
   return refs;
 }
 
-export async function setCommitRef(git: GitRunner, sessionId: string, commitId: string, sha: string | null): Promise<void> {
-  const ref = commitRef(sessionId, commitId);
+export async function setCommitRef(
+  git: GitRunner,
+  sessionId: string,
+  commitId: string,
+  sha: string | null,
+  kind: CommitRefKind = 'commit',
+): Promise<void> {
+  const ref = commitRef(sessionId, commitId, kind);
   if (sha) {
     await git.run(['update-ref', ref, sha]);
   } else {
@@ -42,6 +51,42 @@ export async function setCommitRef(git: GitRunner, sessionId: string, commitId: 
 export async function inHeadHistory(git: GitRunner, sha: string): Promise<boolean> {
   const result = await git.exec(['merge-base', '--is-ancestor', sha, 'HEAD'], { okCodes: [0, 1, 128] });
   return result.exitCode === 0;
+}
+
+/** Whether a remote-tracking branch has the commit (it was pushed, so undoing it would rewrite shared history). */
+export async function isPushed(git: GitRunner, sha: string): Promise<boolean> {
+  const result = await git.exec(['rev-list', '-n', '1', sha, '--not', '--remotes'], { okCodes: [0, 128] });
+  return result.exitCode === 0 && result.stdout.trim() === '';
+}
+
+/** Subjects of the commits made on top of `sha` in HEAD's history, newest first. */
+export async function commitsAfter(git: GitRunner, sha: string): Promise<Array<{ sha: string; subject: string }>> {
+  const out = await git.run(['log', '--format=%H %s', `${sha}..HEAD`]);
+  return out
+    .split('\n')
+    .filter((line) => line.trim())
+    .map((line) => ({ sha: line.slice(0, line.indexOf(' ')), subject: line.slice(line.indexOf(' ') + 1) }));
+}
+
+/**
+ * Undoes `sha` and every commit after it: HEAD moves to its parent, and their changes go back to the
+ * working tree as uncommitted changes (nothing is lost, the index is left empty).
+ */
+export async function undoCommits(git: GitRunner, sha: string): Promise<void> {
+  await git.run(['reset', '--mixed', '--quiet', `${sha}~1`]);
+}
+
+/** Makes a new commit that undoes `sha`. Returns it. On a conflict, leaves git mid-revert and throws. */
+export async function revertCommit(git: GitRunner, sha: string): Promise<string> {
+  try {
+    await git.run(['revert', '--no-edit', sha]);
+  } catch (error) {
+    const detail = error instanceof GitError ? error.stderr.trim().split('\n')[0] : (error as Error).message;
+    throw new Error(
+      `git could not revert ${sha.slice(0, 7)}: ${detail} Resolve it and run "git revert --continue", or "git revert --abort".`,
+    );
+  }
+  return (await git.run(['rev-parse', 'HEAD'])).trim();
 }
 
 /**

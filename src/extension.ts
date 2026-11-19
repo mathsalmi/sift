@@ -460,7 +460,21 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       void vscode.window.showInformationMessage(`${uri instanceof vscode.Uri ? path.basename(uri.fsPath) : 'This file'} is not in the review: it has no uncommitted changes.`);
       return;
     }
-    if (file.status === 'done' && !viewOptions.showDone) {
+    const inCommitted = file.commitId !== null && controller.review?.getCommit(file.commitId).status === 'committed';
+    if (inCommitted && !viewOptions.showCommitted) {
+      const show = await vscode.window.showInformationMessage(
+        `${path.posix.basename(file.path)} is in a committed commit, and committed commits are hidden.`,
+        'Show committed commits',
+      );
+      if (!show) {
+        return;
+      }
+      await viewOptions.setShowCommitted(true);
+    }
+    if (viewOptions.filter && viewOptions.visible([file], true).length === 0) {
+      await viewOptions.setFilter('');
+    }
+    if (!inCommitted && file.status === 'done' && !viewOptions.showDone) {
       const show = await vscode.window.showInformationMessage(
         `${path.posix.basename(file.path)} is approved, and approved files are hidden.`,
         'Show approved files',
@@ -497,50 +511,68 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   register('sift.previousFile', openAdjacent(-1));
   register('sift.nextFile', openAdjacent(1));
 
-  /** The planned commits that can be committed now: the approved ones at the head of the plan, in order. */
-  const readyCommits = () => {
-    const model = controller.review;
-    const ready: PlanCommit[] = [];
-    for (const commit of model?.commitsInOrder() ?? []) {
-      if (commit.status === 'committed') {
-        continue;
-      }
-      if (model!.commitReviewStatus(commit.id) !== 'approved') {
-        break;
-      }
-      ready.push(commit);
-    }
-    return ready;
-  };
+  /** "1. Subject" of a commit, for messages and pickers. */
+  const label = (commit: PlanCommit) => `${commit.order}. ${commit.message.split('\n')[0]}`;
 
-  /** Commits every ready commit, in order, after one confirmation. Returns how many it made. */
-  const commitReady = async (andPush: boolean): Promise<number> => {
-    const ready = readyCommits();
-    if (ready.length === 0) {
-      void vscode.window.showInformationMessage('No approved commit is waiting to be committed.');
+  /**
+   * Commits `target` with the commits it builds on, or with no target every approved commit that
+   * can be committed (falling back to the commit in review when none is approved). Asks only when
+   * something in the batch is not approved yet. Returns how many commits it made.
+   */
+  const commitPlanned = async (target?: string): Promise<number> => {
+    const model = controller.review;
+    if (!model) {
       return 0;
     }
-    const paths = ready.flatMap((c) => controller.review!.filesOf(c.id).map((f) => f.path));
-    if (!(await confirmUnresolved(paths, 'Commit'))) {
-      return 0;
-    }
-    const action = andPush ? 'Commit and push' : 'Commit';
-    const choice = await vscode.window.showInformationMessage(
-      ready.length === 1 ? `${action} "${ready[0].message.split('\n')[0]}"?` : `${action} ${ready.length} approved commits?`,
-      { modal: true, detail: ready.length === 1 ? undefined : ready.map((c) => `${c.order}. ${c.message.split('\n')[0]}`).join('\n') },
-      action,
-    );
-    if (choice !== action) {
-      return 0;
-    }
-    for (const commit of ready) {
-      if (controller.review?.state.session.currentCommitId !== commit.id) {
-        await controller.startCommit(commit.id);
+    let batch = model.commitBatch(target);
+    if (batch.length === 0 && !target) {
+      const current = model.currentCommit();
+      if (!current) {
+        void vscode.window.showInformationMessage('No commit is approved yet. Approve its files first.');
+        return 0;
       }
-      await controller.approveCurrent();
+      batch = model.commitBatch(current.id);
     }
-    void vscode.window.showInformationMessage(`Committed ${ready.length} commit(s).${andPush ? ' Pushing…' : ''}`);
-    return ready.length;
+    if (batch.length === 0) {
+      void vscode.window.showInformationMessage('There is nothing to commit.');
+      return 0;
+    }
+    // Hard problems (no files, a dependency that was reverted) stop here without asking anything.
+    const before = new Set<string>();
+    for (const commit of batch) {
+      const blocker = model.commitBlocker(commit.id, before);
+      if (blocker) {
+        throw new Error(blocker);
+      }
+      before.add(commit.id);
+    }
+    const unapproved = batch.filter((c) => model.unapprovedCount(c.id) > 0);
+    if (unapproved.length > 0) {
+      const files = unapproved.reduce((sum, c) => sum + model.unapprovedCount(c.id), 0);
+      const what = unapproved.length === 1 ? `"${label(unapproved[0]).replace(/^\d+\. /, '')}" has` : `${unapproved.length} commits have`;
+      const choice = await vscode.window.showWarningMessage(
+        `${what} ${files} file(s) not approved yet. Commit anyway?`,
+        {
+          modal: true,
+          detail: batch.length > 1 ? `Commits, in order:\n${batch.map((c) => `${label(c)}${model.unapprovedCount(c.id) > 0 ? ' (not approved)' : ''}`).join('\n')}` : undefined,
+        },
+        'Commit anyway',
+      );
+      if (choice !== 'Commit anyway') {
+        return 0;
+      }
+    }
+    const previous = model.state.session.currentCommitId;
+    const result = await controller.commitCommits(
+      batch.map((c) => c.id),
+      { allowUnapproved: unapproved.length > 0 },
+    );
+    const done = result.shas.length === 1 ? `Committed ${result.shas[0].slice(0, 7)}` : `Committed ${result.shas.length} commits`;
+    void vscode.window.setStatusBarMessage(`$(git-commit) ${done}`, 5000);
+    if (result.nextCommitId && result.nextCommitId !== previous) {
+      await openNextTodo(controller);
+    }
+    return result.shas.length;
   };
 
   /** Pushes with VS Code's Git, which handles sign-in and publishing a new branch. */
@@ -550,49 +582,138 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   };
 
   register('sift.commitApproved', async () => {
-    await commitReady(false);
+    await commitPlanned();
   });
   register('sift.commitApprovedAndPush', async () => {
-    if ((await commitReady(true)) > 0) {
+    if ((await commitPlanned()) > 0) {
       await push();
     }
   });
   register('sift.push', push);
 
+  /** The commit a commit action applies to: the clicked one, else the one picked from `candidates`. */
+  const pickCommit = async (node: PlanNode | undefined, candidates: PlanCommit[], placeHolder: string, empty: string) => {
+    const fromNode = commitIdOf(node);
+    if (fromNode) {
+      return fromNode;
+    }
+    if (candidates.length === 0) {
+      void vscode.window.showInformationMessage(empty);
+      return undefined;
+    }
+    const pick = await vscode.window.showQuickPick(
+      candidates.map((c) => ({ label: label(c), description: c.sha?.slice(0, 7), commitId: c.id })),
+      { placeHolder },
+    );
+    return pick?.commitId;
+  };
+
   register('sift.approveCommit', async (node?: PlanNode) => {
     const model = controller.review;
-    const commitId = commitIdOf(node) ?? model?.state.session.currentCommitId;
-    if (!model || !commitId) {
-      void vscode.window.showInformationMessage('Start reviewing a commit first.');
+    if (!model) {
+      return;
+    }
+    const pending = model.commitsInOrder().filter((c) => c.status !== 'committed');
+    const commitId =
+      commitIdOf(node) ?? model.state.session.currentCommitId ?? (await pickCommit(undefined, pending, 'Commit to make', 'Every commit is committed.'));
+    if (commitId) {
+      await commitPlanned(commitId);
+    }
+  });
+
+  register('sift.setDependencies', async (node?: PlanNode) => {
+    const model = controller.review;
+    if (!model) {
+      return;
+    }
+    const pending = model.commitsInOrder().filter((c) => c.status !== 'committed');
+    const commitId = await pickCommit(node, pending, 'Commit whose dependencies to set', 'Every commit is committed.');
+    if (!commitId) {
       return;
     }
     const commit = model.getCommit(commitId);
-    const blocker = model.approvalBlocker(commitId);
-    if (blocker) {
-      void vscode.window.showWarningMessage(blocker);
+    const earlier = model.commitsInOrder().filter((c) => c.order < commit.order);
+    if (earlier.length === 0) {
+      void vscode.window.showInformationMessage(`"${commit.message.split('\n')[0]}" is the first commit: move it down to make it build on another one.`);
       return;
     }
-    if (!(await confirmUnresolved(model.filesOf(commitId).map((f) => f.path), 'Commit'))) {
-      return;
-    }
-    const choice = await vscode.window.showInformationMessage(
-      `Commit ${model.filesOf(commitId).length} file(s) as "${commit.message}"?`,
-      { modal: true },
-      'Commit',
+    const current = new Set(commit.dependsOn ?? []);
+    const picked = await vscode.window.showQuickPick(
+      earlier.map((c) => ({
+        label: label(c),
+        description: c.status === 'committed' ? 'committed' : undefined,
+        picked: current.has(c.id),
+        commitId: c.id,
+      })),
+      {
+        canPickMany: true,
+        placeHolder: `Commits "${commit.message.split('\n')[0]}" builds on: it can't be committed or moved before them`,
+      },
     );
-    if (choice !== 'Commit') {
+    if (picked) {
+      await controller.setDependencies(commitId, picked.map((p) => p.commitId));
+    }
+  });
+
+  register('sift.undoCommit', async (node?: PlanNode) => {
+    const model = controller.review;
+    if (!model) {
       return;
     }
-    if (model.state.session.currentCommitId !== commitId) {
-      await controller.startCommit(commitId);
-    }
-    const result = await controller.approveCurrent();
-    if (result.nextCommitId) {
-      void vscode.window.showInformationMessage(`Committed ${result.sha.slice(0, 7)}. Next commit is in review.`);
-      await openNextTodo(controller);
+    const local = model.commitsInOrder().filter((c) => c.status === 'committed' && !c.pushed && !c.revertedBy);
+    const commitId = await pickCommit(node, local, 'Commit to undo', 'No commit made in this review is waiting to be pushed.');
+    if (!commitId) {
       return;
     }
-    void vscode.window.showInformationMessage(`Committed ${result.sha.slice(0, 7)}. All planned commits are done.`);
+    const commit = model.getCommit(commitId);
+    // Undoing a commit undoes the ones made on top of it too: say so when there are any.
+    const later = await controller.commitsUndoneWith(commitId);
+    if (later.length > 0) {
+      const choice = await vscode.window.showWarningMessage(
+        `Undo "${commit.message.split('\n')[0]}" and the ${later.length} commit(s) made after it?`,
+        {
+          modal: true,
+          detail: `Their changes go back to your working tree, uncommitted:\n${later.map((c) => `${c.sha.slice(0, 7)} ${c.subject}`).join('\n')}`,
+        },
+        'Undo commits',
+      );
+      if (choice !== 'Undo commits') {
+        return;
+      }
+    }
+    await controller.undoCommit(commitId);
+    await comments.rerender();
+    void vscode.window.setStatusBarMessage(`$(discard) Undid "${commit.message.split('\n')[0]}": its changes are back in the plan`, 5000);
+  });
+
+  register('sift.revertCommit', async (node?: PlanNode) => {
+    const model = controller.review;
+    if (!model) {
+      return;
+    }
+    const revertible = model.commitsInOrder().filter((c) => c.status === 'committed' && !c.revertedBy);
+    const commitId = await pickCommit(node, revertible, 'Commit to revert', 'No commit of this review can be reverted.');
+    if (!commitId) {
+      return;
+    }
+    const commit = model.getCommit(commitId);
+    const waiting = model.dependentsOf(commitId).filter((c) => c.status !== 'committed');
+    const choice = await vscode.window.showWarningMessage(
+      `Revert "${commit.message.split('\n')[0]}"?`,
+      {
+        modal: true,
+        detail: [
+          'This makes a new commit that undoes its changes.',
+          ...(waiting.length > 0 ? [`These planned commits build on it and can't be committed after the revert: ${waiting.map(label).join(', ')}.`] : []),
+        ].join('\n\n'),
+      },
+      'Revert',
+    );
+    if (choice !== 'Revert') {
+      return;
+    }
+    const sha = await controller.revertCommit(commitId);
+    void vscode.window.setStatusBarMessage(`$(discard) Reverted with ${sha.slice(0, 7)}`, 5000);
   });
 
   register('sift.collapseAll', () => viewOptions.setCollapsed(true));
@@ -603,6 +724,37 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   register('sift.ungroupByStatus', () => viewOptions.setGroupByStatus(false));
   register('sift.hideDone', () => viewOptions.setShowDone(false));
   register('sift.showDone', () => viewOptions.setShowDone(true));
+  register('sift.hideCommitted', () => viewOptions.setShowCommitted(false));
+  register('sift.showCommitted', () => viewOptions.setShowCommitted(true));
+
+  /** Narrows the plan to the files whose path fuzzy-matches what is typed, as it is typed. */
+  const filterFiles = async () => {
+    const before = viewOptions.filter;
+    const input = vscode.window.createInputBox();
+    input.title = 'Filter files';
+    input.placeholder = 'Part of a file name or path, e.g. "ctrl rev" finds src/controller/ReviewController.ts';
+    input.value = before;
+    let accepted = false;
+    input.onDidChangeValue((value) => void viewOptions.setFilter(value));
+    input.onDidAccept(() => {
+      accepted = true;
+      input.hide();
+    });
+    input.onDidHide(() => {
+      if (!accepted) {
+        void viewOptions.setFilter(before); // Escape: back to the filter as it was
+      }
+      input.dispose();
+    });
+    input.show();
+  };
+  register('sift.filterFiles', filterFiles);
+  register('sift.editFilter', filterFiles);
+  register('sift.clearFilter', () => viewOptions.setFilter(''));
+  const updateFilterMessage = () => {
+    planView.message = viewOptions.filter ? `Files matching "${viewOptions.filter}"` : undefined;
+  };
+  context.subscriptions.push(viewOptions.onDidChange(updateFilterMessage));
 
   // ---- AI: plan and comment threads ----
 
@@ -794,14 +946,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
    * committed, and commits not pushed yet (or a branch never published).
    */
   const updateShipContext = async () => {
-    void vscode.commands.executeCommand('setContext', 'sift.readyToCommit', readyCommits().length > 0);
+    void vscode.commands.executeCommand('setContext', 'sift.readyToCommit', (controller.review?.commitBatch().length ?? 0) > 0);
     const upstream = await git.exec(['rev-list', '--count', '@{upstream}..HEAD'], { okCodes: [0, 128] }).catch(() => null);
     let unpushed = false;
     if (upstream?.exitCode === 0) {
       unpushed = Number(upstream.stdout.trim()) > 0;
     } else {
       // No upstream: worth publishing once Sift made a commit on this branch.
-      unpushed = controller.review?.state.commits.some((c) => c.status === 'committed') ?? false;
+      unpushed = controller.review?.state.commits.some((c) => c.status === 'committed' && !c.pushed) ?? false;
     }
     void vscode.commands.executeCommand('setContext', 'sift.unpushed', unpushed);
   };

@@ -225,22 +225,91 @@ export class ReviewModel {
 
   /** Why the commit can't be approved yet, or null when it can. */
   approvalBlocker(commitId: string): string | null {
-    const commit = this.getCommit(commitId);
-    if (commit.status === 'committed') {
-      return 'This commit is already committed.';
+    const blocker = this.commitBlocker(commitId);
+    if (blocker) {
+      return blocker;
     }
-    if (!commit.message.trim()) {
-      return 'The commit has no message.';
-    }
-    const files = this.filesOf(commitId);
-    if (files.length === 0) {
-      return 'The commit has no files.';
-    }
-    const pending = files.filter((f) => f.status !== 'done').length;
+    const pending = this.unapprovedCount(commitId);
     if (pending > 0) {
       return `${pending} file(s) in this commit are not approved yet.`;
     }
     return null;
+  }
+
+  /**
+   * Why the commit can't be committed at all, approved or not, or null when it can. `before`: commits
+   * that will be committed ahead of it, which count as committed dependencies.
+   */
+  commitBlocker(commitId: string, before: ReadonlySet<string> = new Set()): string | null {
+    const commit = this.getCommit(commitId);
+    if (commit.status === 'committed') {
+      return `"${subjectOf(commit)}" is already committed.`;
+    }
+    if (!commit.message.trim()) {
+      return 'The commit has no message.';
+    }
+    if (this.filesOf(commitId).length === 0) {
+      return `"${subjectOf(commit)}" has no files.`;
+    }
+    for (const dependency of this.dependenciesOf(commitId)) {
+      if (dependency.revertedBy) {
+        return `"${subjectOf(commit)}" builds on "${subjectOf(dependency)}", which was reverted.`;
+      }
+      if (dependency.status !== 'committed' && !before.has(dependency.id)) {
+        return `"${subjectOf(commit)}" builds on "${subjectOf(dependency)}", which is not committed yet.`;
+      }
+    }
+    return null;
+  }
+
+  /** Files of the commit that are not approved yet. */
+  unapprovedCount(commitId: string): number {
+    return this.filesOf(commitId).filter((f) => f.status !== 'done').length;
+  }
+
+  /**
+   * The commits to make, in order. With a target: its uncommitted dependencies (and theirs), then the
+   * target. Without one: every approved commit whose dependencies are committed or come with it.
+   */
+  commitBatch(target?: string): PlanCommit[] {
+    if (target) {
+      const wanted = new Set<string>();
+      const add = (id: string) => {
+        const commit = this.getCommit(id);
+        if (commit.status === 'committed' || wanted.has(id)) {
+          return;
+        }
+        wanted.add(id);
+        for (const dependency of this.dependenciesOf(id)) {
+          add(dependency.id);
+        }
+      };
+      add(target);
+      return this.commitsInOrder().filter((c) => wanted.has(c.id));
+    }
+    const batch: PlanCommit[] = [];
+    const ids = new Set<string>();
+    for (const commit of this.commitsInOrder()) {
+      if (commit.status === 'committed' || this.commitReviewStatus(commit.id) !== 'approved') {
+        continue;
+      }
+      if (this.commitBlocker(commit.id, ids) === null) {
+        batch.push(commit);
+        ids.add(commit.id);
+      }
+    }
+    return batch;
+  }
+
+  /** The commits this one builds on, in plan order. */
+  dependenciesOf(commitId: string): PlanCommit[] {
+    const ids = new Set(this.getCommit(commitId).dependsOn ?? []);
+    return this.commitsInOrder().filter((c) => ids.has(c.id));
+  }
+
+  /** The commits that build on this one, in plan order. */
+  dependentsOf(commitId: string): PlanCommit[] {
+    return this.commitsInOrder().filter((c) => c.dependsOn?.includes(commitId));
   }
 
   // ---- git ----
@@ -285,7 +354,7 @@ export class ReviewModel {
             outcome.committedOutside.push(subject);
           }
         } else {
-          this.state.commits = this.state.commits.filter((c) => c.id !== commit.id);
+          this.forgetCommit(commit.id);
           this.state.threads = this.state.threads.filter((t) => t.commitId !== commit.id);
           this.state.files = this.state.files.filter((f) => f.commitId !== commit.id);
           outcome.refs.set(commit.id, null);
@@ -437,6 +506,14 @@ export class ReviewModel {
         }
         seen.add(filePath);
       }
+      if (commit.dependsOn !== undefined && !Array.isArray(commit.dependsOn)) {
+        throw new Error(`Plan commit #${index + 1}: "dependsOn" must be an array of commit numbers.`);
+      }
+      for (const dependency of commit.dependsOn ?? []) {
+        if (!Number.isInteger(dependency) || dependency < 1 || dependency > index) {
+          throw new Error(`Plan commit #${index + 1} depends on #${String(dependency)}; it can only depend on commits before it.`);
+        }
+      }
       for (const note of commit.explanations ?? []) {
         if (!commit.files.includes(note?.path)) {
           throw new Error(`Plan commit #${index + 1} explains "${note?.path}", which is not one of its files.`);
@@ -469,8 +546,14 @@ export class ReviewModel {
       this.state.session.currentCommitId = null;
     }
 
+    const created: PlanCommit[] = [];
     for (const input of plan.commits) {
       const commit = this.addCommit(input.message, input.intent ?? '', input.riskNotes ?? []);
+      const dependsOn = [...new Set(input.dependsOn ?? [])].map((n) => created[n - 1].id);
+      if (dependsOn.length > 0) {
+        commit.dependsOn = dependsOn;
+      }
+      created.push(commit);
       for (const filePath of input.files) {
         const file = this.findFile(filePath);
         if (file) {
@@ -519,13 +602,16 @@ export class ReviewModel {
     for (const file of this.filesOf(commitId)) {
       file.commitId = null;
     }
-    this.state.commits = this.state.commits.filter((c) => c.id !== commitId);
+    this.forgetCommit(commitId);
     if (this.state.session.currentCommitId === commitId) {
       this.state.session.currentCommitId = null;
     }
   }
 
-  /** Swaps the commit with its neighbour; committed commits stay where they are. */
+  /**
+   * Swaps the commit with its neighbour; committed commits stay where they are, and a commit never
+   * moves ahead of one it builds on.
+   */
   moveCommit(commitId: string, delta: -1 | 1): void {
     const commit = this.editableCommit(commitId);
     const ordered = this.commitsInOrder();
@@ -534,7 +620,27 @@ export class ReviewModel {
     if (index + delta < 0 || !neighbour || neighbour.status === 'committed') {
       return;
     }
+    const [first, second] = delta < 0 ? [neighbour, commit] : [commit, neighbour];
+    if (second.dependsOn?.includes(first.id)) {
+      throw new Error(`"${subjectOf(second)}" builds on "${subjectOf(first)}", so it can't come before it.`);
+    }
     [commit.order, neighbour.order] = [neighbour.order, commit.order];
+  }
+
+  /** Sets the commits this one builds on: commits that come before it in the plan. */
+  setDependencies(commitId: string, dependencyIds: string[]): void {
+    const commit = this.editableCommit(commitId);
+    for (const id of dependencyIds) {
+      const dependency = this.getCommit(id);
+      if (dependency.order >= commit.order) {
+        throw new Error(`"${subjectOf(commit)}" can only build on commits before it. Move it below "${subjectOf(dependency)}" first.`);
+      }
+    }
+    const ids = new Set(dependencyIds);
+    const dependsOn = this.commitsInOrder()
+      .filter((c) => ids.has(c.id))
+      .map((c) => c.id);
+    commit.dependsOn = dependsOn.length > 0 ? dependsOn : undefined;
   }
 
   moveFiles(paths: string[], commitId: string | null): void {
@@ -639,6 +745,19 @@ export class ReviewModel {
     const commit = this.getCommit(commitId);
     commit.status = 'committed';
     commit.sha = sha;
+    // Git's order: a commit made ahead of planned ones it doesn't build on moves up to just after
+    // the commits already made.
+    const others = this.commitsInOrder().filter((c) => c.id !== commitId);
+    let at = 0;
+    others.forEach((c, i) => {
+      if (c.status === 'committed') {
+        at = i + 1;
+      }
+    });
+    others.splice(at, 0, commit);
+    others.forEach((c, i) => {
+      c.order = i + 1;
+    });
 
     const next = this.commitsInOrder().find((c) => c.status !== 'committed') ?? null;
     this.state.session.currentCommitId = null;
@@ -816,6 +935,17 @@ export class ReviewModel {
     return commit;
   }
 
+  /** Removes a commit from the plan, and from the commits that built on it. */
+  private forgetCommit(commitId: string): void {
+    this.state.commits = this.state.commits.filter((c) => c.id !== commitId);
+    for (const commit of this.state.commits) {
+      if (commit.dependsOn?.includes(commitId)) {
+        const rest = commit.dependsOn.filter((id) => id !== commitId);
+        commit.dependsOn = rest.length > 0 ? rest : undefined;
+      }
+    }
+  }
+
   private userMessage(threadId: string, index: number) {
     const message = this.getThread(threadId).messages[index];
     if (!message) {
@@ -856,6 +986,11 @@ export class ReviewModel {
     }, 0);
     return `c_${String(max + 1).padStart(2, '0')}`;
   }
+}
+
+/** First line of the commit message. */
+export function subjectOf(commit: PlanCommit): string {
+  return commit.message.split('\n')[0].trim();
 }
 
 function newFile(change: FileChange): ReviewFile {

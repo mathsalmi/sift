@@ -10,7 +10,7 @@ When an AI (or you) changes hundreds of files in one go, reviewing a single gian
 
 - **AI commit plan:** one click groups every changed file into ordered, atomic commits, with an intent, risk notes and explanations on the lines that matter. Drag files between commits to adjust.
 - **Ask about any line:** in a comment, ask a question (the AI answers in the thread) or give a direction (the AI edits the code and says what it changed). Markdown works, **Cmd+Enter** sends, and the thread shows *Thinking…* while the AI works. Edit or delete your own comments. Your comments show your GitHub picture once you allow Sift to use VS Code's GitHub account (Accounts menu).
-- **Your choice of AI:** Claude Code (uses your Claude login, e.g. through the Claude Code extension), any model VS Code exposes (GitHub Copilot or other extensions), or any command line tool.
+- **Your choice of AI:** a command line AI (Claude Code, Codex, Gemini CLI) with your own login, any model VS Code offers (GitHub Copilot's GPT, Claude, Gemini, Grok… or other extensions'), or any command you like.
 - **Versions per file:** Sift freezes your files in a snapshot when a commit's review starts and after each AI edit, and every file gets its own version numbers: a file goes from v0 to v1 only when a round changed it, so an untouched file stays at v0 while another reaches v7. You can diff:
   - **Latest change** ("This round"): the file's previous version ↔ working tree, while the change is unseen.
   - **Changed since approval:** a file you edit after approving it shows only that edit: the approved content ↔ working tree.
@@ -31,9 +31,9 @@ When an AI (or you) changes hundreds of files in one go, reviewing a single gian
 - VS Code 1.95 or later
 - Git
 - An AI, any of:
-  - [Claude Code](https://claude.com/claude-code): the VS Code extension or the CLI. Sift finds the extension's bundled `claude` binary by itself.
-  - A VS Code language model, e.g. from GitHub Copilot Chat.
-  - A command line tool that reads a prompt on stdin, e.g. `codex exec -`, `gemini -p`, `llm`.
+  - A command line AI: [Claude Code](https://claude.com/claude-code) (its VS Code extension is enough), [Codex](https://github.com/openai/codex) or [Gemini CLI](https://github.com/google-gemini/gemini-cli).
+  - A model in VS Code, e.g. from GitHub Copilot Chat.
+  - Any command that reads a prompt on stdin and prints the answer, e.g. `llm`.
 
 Sift also works without AI for manual reviews.
 
@@ -71,9 +71,13 @@ Click the AI's name in the status bar (next to Sift's review progress), or run *
 
 | Provider | How Sift calls it |
 | --- | --- |
-| **Claude Code** | Runs `claude -p` with read-only tools and a JSON schema. Uses the binary bundled with the Claude Code VS Code extension, else `claude` from your login shell. Pick the default model, opus, sonnet or haiku. |
-| **VS Code language models** | Any model registered in VS Code, e.g. by GitHub Copilot Chat. VS Code asks you once to allow Sift to use it. |
-| **Command line tool** | Any command, run in your login shell at the repo root. It gets the prompt on stdin and must print an answer containing the JSON. |
+| **Claude Code** | `claude -p` with read-only tools (`Read`, `Grep`, `Glob`), no MCP servers, and a JSON schema for the answer. Uses the binary bundled with the Claude Code extension, else `claude` from your login shell. |
+| **Codex** | `codex exec --sandbox read-only -`, prompt on stdin. |
+| **Gemini CLI** | `gemini --output-format json`, prompt on stdin. Run without a terminal, it uses no tool that needs approval, so it reads but doesn't write. |
+| **VS Code model** | Any model available in VS Code, e.g. from GitHub Copilot. VS Code asks you once to allow Sift to use it. |
+| **Custom command** | Any command, run in your login shell at the repo root. It gets the prompt on stdin and must print an answer containing the JSON. |
+
+For the command line AIs, Choose AI… shows which ones it found and then asks for the model (or the tool's default). They use your own login and subscription.
 
 ## Plan file
 
@@ -121,20 +125,18 @@ Also in the Sift view and command palette: Plan commits with AI · Choose AI… 
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| `sift.ai.provider` | `claude-code` | `claude-code`, `vscode-lm` or `command`. Easiest to set with **Choose AI…** |
-| `sift.ai.claudeCodeModel` | empty | Claude Code model, e.g. `opus`, `sonnet`, `haiku`; empty for its default |
-| `sift.ai.claudeCodePath` | empty | Path to `claude`; empty to use the Claude Code extension's binary or your shell's |
-| `sift.ai.claudeCodeAdditionalDirectories` | `[]` | Folders outside the repo Claude Code may read, e.g. `~/code` for sibling worktrees |
-| `sift.ai.claudeCodeAllowedTools` | `[]` | Extra tools Claude Code may use, e.g. `WebFetch` or `mcp__claude_ai_Atlassian` (all tools of that MCP server). Naming an MCP tool loads your MCP servers, which makes calls slower |
-| `sift.ai.languageModel` | empty | VS Code language model id; empty for the first available |
-| `sift.ai.command` | empty | Command for the `command` provider |
+| `sift.ai.provider` | `claude` | `claude`, `codex`, `gemini`, `vscode` or `custom`. Easiest to set with **Choose AI…** |
+| `sift.ai.model` | empty | Model in the provider's own terms, e.g. `opus`, `flash`, or a VS Code model id; empty for the provider's default |
+| `sift.ai.command` | empty | For `custom`: the command. For a command line AI: its path, when Sift can't find it |
+| `sift.ai.additionalDirectories` | `[]` | Folders outside the repo the AI may read, e.g. `~/code` for sibling worktrees (Claude Code, Gemini CLI) |
+| `sift.ai.extraArguments` | `[]` | Extra options for the command line AI, e.g. `--allowedTools=WebFetch` for Claude Code. Naming an MCP tool there loads your MCP servers, which makes calls slower |
 | `sift.stateLocation` | `repo` | `repo`: `.sift/state.json`, excluded via `.git/info/exclude`. `workspaceStorage`: outside the repo. |
 | `sift.snapshotMaxFileSizeMB` | `5` | New files larger than this are left out of snapshots |
 
 ## How it works
 
 - **Snapshots:** git trees built with a private index (`.git/sift/index`) and kept under `refs/sift/<session>/<commit>/v<N>`. Your real index isn't touched until you approve.
-- **AI calls:** Sift sends the prompt (numbered diffs, the file, the thread) to the chosen AI and asks for JSON. Claude Code runs with read-only tools (`Read`, `Grep`, `Glob`) inside the repo, and no MCP servers or slash commands. A one-shot run cannot ask for permission, so anything else is denied unless you allow it with `sift.ai.claudeCodeAdditionalDirectories` or `sift.ai.claudeCodeAllowedTools`. Code changes come back as search/replace edits; Sift applies all of them or none, only inside the repo, then takes a new snapshot so the files the AI changed get a new version and "latest change" shows exactly what it did.
+- **AI calls:** Sift sends the prompt (numbered diffs, the file, the thread) to the chosen AI and asks for JSON. Command line AIs run once per request and read-only: a one-shot run cannot ask for permission, so anything else is denied unless you allow it with `sift.ai.additionalDirectories` or `sift.ai.extraArguments`. Settings from earlier versions (`sift.ai.claudeCodeModel`, …) are moved to these on startup. Code changes come back as search/replace edits; Sift applies all of them or none, only inside the repo, then takes a new snapshot so the files the AI changed get a new version and "latest change" shows exactly what it did.
 - **Comments:** stored in the state file and anchored by line text, so they follow code that moves. A thread whose line is gone shows as outdated.
 - **State:** `.sift/state.json` holds only your decisions: the plan, file assignments, approvals, comments. What git knows is read from git every time and never saved: which files changed and how, and which planned commits are committed. Each commit Sift makes is recorded in `refs/sift/<session>/<commit>/commit`; nothing is added to commit messages.
 - **Commits made outside Sift** (terminal, Source Control view, rebase, squash) are picked up as they happen, and when VS Code starts. A planned commit whose files no longer differ from HEAD is committed, linked to the newest commit that touched them; if no commit touched them they were reverted and the commit leaves the plan. A commit that leaves HEAD's history (`git reset`) goes back to the plan. Commits you created empty are left alone.

@@ -854,27 +854,66 @@
         "sift.ai.provider": {
           "type": "string",
           "enum": [
-            "claude-code",
-            "vscode-lm",
-            "command"
+            "claude",
+            "codex",
+            "gemini",
+            "vscode",
+            "custom"
+          ],
+          "enumItemLabels": [
+            "Claude Code",
+            "Codex",
+            "Gemini CLI",
+            "VS Code model",
+            "Custom command"
           ],
           "enumDescriptions": [
-            "Claude Code: the binary of the Claude Code VS Code extension, or `claude` from your shell. Uses your Claude login.",
-            "A chat model registered in VS Code (GitHub Copilot, or any extension that provides models). See sift.ai.languageModel.",
-            "Any command line tool that reads the prompt on stdin and prints the answer. See sift.ai.command."
+            "Claude Code's command line tool: the one bundled with the Claude Code extension, else `claude` from your shell.",
+            "OpenAI's Codex command line tool (`codex`).",
+            "Google's Gemini command line tool (`gemini`).",
+            "A model available in VS Code, e.g. from GitHub Copilot (GPT, Claude, Gemini, Grok…) or another extension.",
+            "Any command that reads the prompt on stdin and prints the answer: set it in Command."
           ],
-          "default": "claude-code",
-          "description": "Which AI Sift asks. Run \"Sift: Choose AI…\" to pick from what is available."
+          "default": "claude",
+          "markdownDescription": "Which AI Sift asks. The easiest way to set it is **Sift: Choose AI…**, or click the AI's name in the status bar."
+        },
+        "sift.ai.model": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Model to use, in the provider's own terms: e.g. `opus` for Claude Code, `flash` for Gemini CLI, a model id for VS Code models. Empty: the provider's default."
+        },
+        "sift.ai.command": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "For **Custom command**: the command, run in your login shell at the repository root, e.g. `llm -m gpt-4o`. For the command line AIs: the path to the tool, when Sift can't find it by itself."
+        },
+        "sift.ai.additionalDirectories": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "markdownDescription": "Folders outside the repository the AI may read, e.g. `~/code` for sibling worktrees. Used by Claude Code and Gemini CLI."
+        },
+        "sift.ai.extraArguments": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "markdownDescription": "Extra options for the command line AI, added to the ones Sift passes. E.g. `--allowedTools=WebFetch` lets Claude Code fetch web pages; `--profile=work` picks a Codex profile."
         },
         "sift.ai.claudeCodeModel": {
           "type": "string",
           "default": "",
-          "description": "Model for Claude Code, e.g. opus, sonnet, haiku. Empty: Claude Code's default."
+          "description": "Replaced by the generic sift.ai settings; moved automatically.",
+          "deprecationMessage": "Replaced by sift.ai.model, sift.ai.command, sift.ai.additionalDirectories and sift.ai.extraArguments. Sift moves it there on startup."
         },
         "sift.ai.claudeCodePath": {
           "type": "string",
           "default": "",
-          "description": "Path to the claude binary. Empty: the one bundled with the Claude Code extension, else `claude` from your shell."
+          "description": "Replaced by the generic sift.ai settings; moved automatically.",
+          "deprecationMessage": "Replaced by sift.ai.model, sift.ai.command, sift.ai.additionalDirectories and sift.ai.extraArguments. Sift moves it there on startup."
         },
         "sift.ai.claudeCodeAdditionalDirectories": {
           "type": "array",
@@ -882,7 +921,8 @@
             "type": "string"
           },
           "default": [],
-          "markdownDescription": "Folders outside the repository Claude Code may read, e.g. `~/code` for sibling worktrees. Without them, reads outside the repository are denied."
+          "description": "Replaced by the generic sift.ai settings; moved automatically.",
+          "deprecationMessage": "Replaced by sift.ai.model, sift.ai.command, sift.ai.additionalDirectories and sift.ai.extraArguments. Sift moves it there on startup."
         },
         "sift.ai.claudeCodeAllowedTools": {
           "type": "array",
@@ -890,17 +930,14 @@
             "type": "string"
           },
           "default": [],
-          "markdownDescription": "Extra tools Claude Code may use without asking, e.g. `WebFetch`, `mcp__claude_ai_Atlassian` (every tool of that MCP server) or `mcp__claude_ai_Atlassian__getJiraIssue`. Naming an MCP tool loads your MCP servers, which makes each call slower. A one-shot run cannot ask for permission, so tools that are not listed are denied."
+          "description": "Replaced by the generic sift.ai settings; moved automatically.",
+          "deprecationMessage": "Replaced by sift.ai.model, sift.ai.command, sift.ai.additionalDirectories and sift.ai.extraArguments. Sift moves it there on startup."
         },
         "sift.ai.languageModel": {
           "type": "string",
           "default": "",
-          "description": "Id of the VS Code language model (provider vscode-lm). Empty: the first available."
-        },
-        "sift.ai.command": {
-          "type": "string",
-          "default": "",
-          "description": "Command for provider \"command\", run in your login shell at the repo root. It gets the prompt on stdin and must print a JSON answer, e.g. `codex exec -`."
+          "description": "Replaced by the generic sift.ai settings; moved automatically.",
+          "deprecationMessage": "Replaced by sift.ai.model, sift.ai.command, sift.ai.additionalDirectories and sift.ai.extraArguments. Sift moves it there on startup."
         }
       }
     },

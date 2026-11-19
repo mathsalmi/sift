@@ -4,86 +4,166 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { extractJson } from './prompts';
+import { aiSettings, updateAiSettings, type AiSettings, type ProviderKind } from './settings';
 import type { AiProvider, AiRequest } from './types';
-
-export type ProviderKind = 'claude-code' | 'vscode-lm' | 'command';
 
 const CLAUDE_EXTENSION_ID = 'anthropic.claude-code';
 
-/** The provider chosen in settings (sift.ai.*). */
-export async function resolveProvider(): Promise<AiProvider> {
-  const config = vscode.workspace.getConfiguration('sift.ai');
-  const kind = config.get<ProviderKind>('provider', 'claude-code');
-  if (kind === 'vscode-lm') {
-    return languageModelProvider(config.get<string>('languageModel', ''));
-  }
-  if (kind === 'command') {
-    const command = config.get<string>('command', '').trim();
-    if (!command) {
-      throw new Error('Set sift.ai.command, or run "Sift: Choose AI".');
-    }
-    return new CommandProvider(command);
-  }
-  return new ClaudeCodeProvider(findClaudeBinary(config.get<string>('claudeCodePath', '')), config.get<string>('claudeCodeModel', ''), {
-    directories: config.get<string[]>('claudeCodeAdditionalDirectories', []),
-    tools: config.get<string[]>('claudeCodeAllowedTools', []),
-  });
+/**
+ * A command line AI Sift knows: how to find it, how to run it once, read-only, and where its
+ * answer is in what it prints.
+ */
+export interface CliPreset {
+  kind: 'claude' | 'codex' | 'gemini';
+  /** "Claude Code" */
+  label: string;
+  /** Author of its messages in comment threads, e.g. "Claude". */
+  author: string;
+  /** Executable name, looked up in the login shell. */
+  binary: string;
+  /** Suggested models besides the default one. */
+  models: string[];
+  /** Where to get it, when it isn't installed. */
+  install: string;
+  /** A copy bundled with a VS Code extension, used before the shell's. */
+  bundled?: () => string | null;
+  args(settings: AiSettings, schema: unknown): string[];
+  parse(stdout: string): unknown;
 }
 
-/** A short label of the configured AI for menus and tooltips, without contacting it. */
+export const CLI_PRESETS: CliPreset[] = [
+  {
+    kind: 'claude',
+    label: 'Claude Code',
+    author: 'Claude',
+    binary: 'claude',
+    models: ['opus', 'sonnet', 'haiku'],
+    install: 'Install the Claude Code extension or CLI',
+    bundled: bundledClaude,
+    args: (s, schema) => claudeArgs(schema, s.model, { directories: s.directories, extraArguments: s.extraArguments }),
+    parse: (stdout) => {
+      let result: { is_error?: boolean; result?: string; structured_output?: unknown };
+      try {
+        result = JSON.parse(stdout) as typeof result;
+      } catch {
+        throw new Error(`Claude Code answered something unexpected: ${stdout.slice(0, 200)}`);
+      }
+      if (result.is_error) {
+        throw new Error(`Claude Code: ${result.result ?? 'unknown error'}`);
+      }
+      return result.structured_output ?? extractJson(result.result ?? '');
+    },
+  },
+  {
+    kind: 'codex',
+    label: 'Codex',
+    author: 'Codex',
+    binary: 'codex',
+    models: [],
+    install: 'Install the Codex CLI: npm install -g @openai/codex',
+    args: (s) => codexArgs(s.model, s.extraArguments),
+    // Progress goes to stderr; stdout is the final message only.
+    parse: (stdout) => extractJson(stdout),
+  },
+  {
+    kind: 'gemini',
+    label: 'Gemini CLI',
+    author: 'Gemini',
+    binary: 'gemini',
+    models: ['pro', 'flash', 'flash-lite'],
+    install: 'Install the Gemini CLI: npm install -g @google/gemini-cli',
+    args: (s) => geminiArgs(s.model, s.directories, s.extraArguments),
+    parse: (stdout) => {
+      let result: { response?: string; error?: { message?: string } };
+      try {
+        result = JSON.parse(stdout) as typeof result;
+      } catch {
+        return extractJson(stdout);
+      }
+      if (result.error) {
+        throw new Error(`Gemini CLI: ${result.error.message ?? 'unknown error'}`);
+      }
+      return extractJson(result.response ?? '');
+    },
+  },
+];
+
+export function cliPreset(kind: ProviderKind): CliPreset | undefined {
+  return CLI_PRESETS.find((p) => p.kind === kind);
+}
+
+/** The provider chosen in settings (sift.ai.*). */
+export async function resolveProvider(): Promise<AiProvider> {
+  const settings = aiSettings();
+  if (settings.provider === 'vscode') {
+    return languageModelProvider(settings.model);
+  }
+  if (settings.provider === 'custom') {
+    if (!settings.command) {
+      throw new Error('Set sift.ai.command, or run "Sift: Choose AI…".');
+    }
+    return new CommandProvider(settings.command);
+  }
+  return new CliProvider(cliPreset(settings.provider) ?? CLI_PRESETS[0], settings);
+}
+
+/** The configured AI for tooltips and messages, without contacting it. */
 export function providerLabel(): string {
-  const config = vscode.workspace.getConfiguration('sift.ai');
-  const kind = config.get<ProviderKind>('provider', 'claude-code');
-  if (kind === 'vscode-lm') {
-    return `VS Code model ${config.get<string>('languageModel', '') || '(first available)'}`;
+  const s = aiSettings();
+  if (s.provider === 'vscode') {
+    return `VS Code model ${s.model || '(first available)'}`;
   }
-  if (kind === 'command') {
-    return `Command: ${config.get<string>('command', '') || '(not set)'}`;
+  if (s.provider === 'custom') {
+    return `Custom command: ${s.command || '(not set)'}`;
   }
-  const model = config.get<string>('claudeCodeModel', '');
-  return `Claude Code${model ? ` (${model})` : ''}`;
+  const preset = cliPreset(s.provider) ?? CLI_PRESETS[0];
+  return `${preset.label}${s.model ? ` (${s.model})` : ''}`;
 }
 
 /** A few words naming the AI, for the status bar. */
 export function providerShortLabel(): string {
-  const config = vscode.workspace.getConfiguration('sift.ai');
-  const kind = config.get<ProviderKind>('provider', 'claude-code');
-  if (kind === 'vscode-lm') {
-    return config.get<string>('languageModel', '') || 'VS Code model';
+  const s = aiSettings();
+  if (s.provider === 'vscode') {
+    return s.model || 'VS Code model';
   }
-  if (kind === 'command') {
-    return 'Command line AI';
+  if (s.provider === 'custom') {
+    return s.command.split(/\s+/)[0] || 'Custom AI';
   }
-  const model = config.get<string>('claudeCodeModel', '');
-  return `Claude Code${model ? ` (${model})` : ''}`;
+  const preset = cliPreset(s.provider) ?? CLI_PRESETS[0];
+  return `${preset.label}${s.model ? ` (${s.model})` : ''}`;
 }
 
 /** Quick pick of every AI Sift can use here; saves the choice in user settings. */
 export async function chooseProvider(): Promise<boolean> {
-  type Item = vscode.QuickPickItem & { apply?: () => Promise<void> };
-  const config = vscode.workspace.getConfiguration('sift.ai');
-  const set = async (values: Record<string, string>) => {
-    for (const [key, value] of Object.entries(values)) {
-      await config.update(key, value, vscode.ConfigurationTarget.Global);
-    }
-  };
+  type Item = vscode.QuickPickItem & { apply?: () => Promise<boolean> };
+  const settings = aiSettings();
+  const [found, models] = await Promise.all([
+    Promise.all(CLI_PRESETS.map((p) => locate(p, settings.provider === p.kind ? settings.command : ''))),
+    vscode.lm.selectChatModels().then(
+      (m) => m,
+      () => [] as vscode.LanguageModelChat[],
+    ),
+  ]);
 
-  const claudeBinary = findClaudeBinary(config.get<string>('claudeCodePath', ''));
-  const items: Item[] = [{ label: 'Claude Code', kind: vscode.QuickPickItemKind.Separator }];
-  for (const model of ['', 'opus', 'sonnet', 'haiku']) {
+  const items: Item[] = [{ label: 'Command line AIs', kind: vscode.QuickPickItemKind.Separator }];
+  CLI_PRESETS.forEach((preset, i) => {
     items.push({
-      label: `$(sparkle) Claude Code${model ? ` · ${model}` : ''}`,
-      description: model ? '' : 'default model',
-      detail: claudeBinary ?? '`claude` from your shell',
-      apply: () => set({ provider: 'claude-code', claudeCodeModel: model }),
+      label: `$(terminal) ${preset.label}`,
+      description: found[i] ? undefined : 'not found',
+      detail: found[i] ?? preset.install,
+      apply: async () => {
+        const model = await pickModel(preset, settings.provider === preset.kind ? settings.model : '');
+        if (model === undefined) {
+          return false;
+        }
+        const command = settings.provider === preset.kind ? settings.command : '';
+        await updateAiSettings({ provider: preset.kind, model, command });
+        return true;
+      },
     });
-  }
+  });
 
-  const models = await vscode.lm.selectChatModels().then(
-    (m) => m,
-    () => [] as vscode.LanguageModelChat[],
-  );
-  items.push({ label: 'VS Code language models', kind: vscode.QuickPickItemKind.Separator });
+  items.push({ label: 'Models in VS Code', kind: vscode.QuickPickItemKind.Separator });
   if (models.length === 0) {
     items.push({ label: 'No models available', description: 'Install an extension that provides models, e.g. GitHub Copilot Chat' });
   }
@@ -91,79 +171,142 @@ export async function chooseProvider(): Promise<boolean> {
     items.push({
       label: `$(hubot) ${model.name}`,
       description: `${model.vendor} · ${model.family}`,
-      apply: () => set({ provider: 'vscode-lm', languageModel: model.id }),
+      apply: async () => {
+        await updateAiSettings({ provider: 'vscode', model: model.id, command: '' });
+        return true;
+      },
     });
   }
 
   items.push({ label: 'Other', kind: vscode.QuickPickItemKind.Separator });
   items.push({
-    label: '$(terminal) Command line tool…',
-    description: 'Any CLI that reads a prompt on stdin and prints the answer',
+    label: '$(gear) Custom command…',
+    description: 'Any command line tool that reads a prompt on stdin and prints the answer',
     apply: async () => {
       const command = await vscode.window.showInputBox({
         prompt: 'Command that reads the prompt on stdin and prints the answer (run in your login shell, in the repo)',
-        placeHolder: 'e.g. codex exec -   ·   gemini -p   ·   llm -m gpt-4o',
-        value: config.get<string>('command', ''),
+        placeHolder: 'e.g. llm -m gpt-4o',
+        value: settings.provider === 'custom' ? settings.command : '',
         ignoreFocusOut: true,
       });
-      if (command?.trim()) {
-        await set({ provider: 'command', command: command.trim() });
+      if (!command?.trim()) {
+        return false;
       }
+      await updateAiSettings({ provider: 'custom', model: '', command: command.trim() });
+      return true;
     },
   });
 
-  const pick = await vscode.window.showQuickPick(items, { placeHolder: `AI for Sift (now: ${providerLabel()})` });
-  if (!pick?.apply) {
-    return false;
+  const pick = await vscode.window.showQuickPick(items, { placeHolder: `AI for Sift (now: ${providerLabel()})`, matchOnDetail: true });
+  return pick?.apply ? pick.apply() : false;
+}
+
+/** The model for a command line AI: its default, a suggested one, or one typed in. Undefined when cancelled. */
+async function pickModel(preset: CliPreset, current: string): Promise<string | undefined> {
+  type Item = vscode.QuickPickItem & { model?: string };
+  const items: Item[] = [
+    { label: 'Default model', description: `${preset.label}'s own choice`, model: '' },
+    ...preset.models.map((m) => ({ label: m, model: m })),
+    { label: 'Other model…' },
+  ];
+  const pick = await vscode.window.showQuickPick(items, { placeHolder: `Model for ${preset.label}${current ? ` (now: ${current})` : ''}` });
+  if (!pick) {
+    return undefined;
   }
-  await pick.apply();
-  return true;
+  if (pick.model !== undefined) {
+    return pick.model;
+  }
+  const typed = await vscode.window.showInputBox({ prompt: `Model name for ${preset.label}`, value: current, ignoreFocusOut: true });
+  return typed?.trim() || undefined;
 }
 
-/** What Claude Code may use besides reading the repository. */
-export interface ClaudeAccess {
-  /** Folders outside the repository it may read (`--add-dir`). */
-  directories: string[];
-  /** Extra tools it may use without asking, e.g. "WebFetch" or "mcp__atlassian" (all tools of that MCP server). */
-  tools: string[];
-}
-
-/** Claude Code as a one-shot command: read-only tools, structured JSON answer. Uses the user's own Claude login. */
-export class ClaudeCodeProvider implements AiProvider {
+/** A command line AI run once per request, read-only, with the prompt on stdin. */
+export class CliProvider implements AiProvider {
   readonly name: string;
 
   constructor(
-    /** Absolute path, or null to run `claude` from the login shell. */
-    private readonly binary: string | null,
-    private readonly model: string,
-    private readonly access: ClaudeAccess = { directories: [], tools: [] },
+    private readonly preset: CliPreset,
+    private readonly settings: AiSettings,
   ) {
-    this.name = model ? `Claude (${model})` : 'Claude';
+    this.name = settings.model ? `${preset.author} (${settings.model})` : preset.author;
   }
 
   async ask(request: AiRequest, signal: AbortSignal): Promise<unknown> {
-    const args = claudeArgs(request.schema, this.model, this.access);
-    const stdout = this.binary
-      ? await runProcess(this.binary, args, request.cwd, request.prompt, signal)
-      : await runInLoginShell(['claude', ...args].map(shellQuote).join(' '), request.cwd, request.prompt, signal);
-    let result: { is_error?: boolean; result?: string; structured_output?: unknown };
-    try {
-      result = JSON.parse(stdout) as typeof result;
-    } catch {
-      throw new Error(`Claude Code answered something unexpected: ${stdout.slice(0, 200)}`);
-    }
-    if (result.is_error) {
-      throw new Error(`Claude Code: ${result.result ?? 'unknown error'}`);
-    }
-    return result.structured_output ?? extractJson(result.result ?? '');
+    const args = this.preset.args(this.settings, request.schema);
+    const binary = this.settings.command || this.preset.bundled?.() || null;
+    const stdout = binary
+      ? await runProcess(binary, args, request.cwd, request.prompt, signal)
+      : await runInLoginShell([this.preset.binary, ...args].map(shellQuote).join(' '), request.cwd, request.prompt, signal);
+    return this.preset.parse(stdout);
   }
 }
 
-export function claudeArgs(schema: unknown, model: string, access: ClaudeAccess = { directories: [], tools: [] }): string[] {
-  const extra = access.tools.map((t) => t.trim()).filter(Boolean);
-  const mcp = extra.filter((t) => t.startsWith('mcp__'));
+/** Where a command line AI is: the configured path, a bundled copy, or the shell's. Null when not found. */
+async function locate(preset: CliPreset, configured: string): Promise<string | null> {
+  if (configured) {
+    return configured;
+  }
+  const bundled = preset.bundled?.();
+  if (bundled) {
+    return bundled;
+  }
+  const lookup = process.platform === 'win32' ? `where ${preset.binary}` : `command -v ${preset.binary}`;
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), 5000);
+  try {
+    const out = await runInLoginShell(lookup, os.homedir(), '', abort.signal);
+    return out.trim().split(/\r?\n/)[0] || null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** What a command line AI may use besides reading the repository. */
+export interface CliAccess {
+  /** Folders outside the repository it may read. */
+  directories: string[];
+  /** Extra options from sift.ai.extraArguments. */
+  extraArguments: string[];
+}
+
+/** Tools named in --allowedTools / --allowed-tools among the extra arguments. */
+function allowedTools(extra: string[]): string[] {
+  const tools: string[] = [];
+  extra.forEach((arg, i) => {
+    const match = /^--allowed-?[tT]ools(?:=(.*))?$/.exec(arg);
+    if (match) {
+      const value = match[1] ?? extra[i + 1] ?? '';
+      tools.push(...splitTools(value));
+    }
+  });
+  return tools;
+}
+
+/** "WebFetch, Bash(git log *)" → ["WebFetch", "Bash(git log *)"]: commas and spaces split, except inside parentheses. */
+function splitTools(value: string): string[] {
+  const tools: string[] = [];
+  let depth = 0;
+  let current = '';
+  for (const c of value) {
+    depth += c === '(' ? 1 : c === ')' ? -1 : 0;
+    if (depth === 0 && (c === ',' || /\s/.test(c))) {
+      tools.push(current);
+      current = '';
+    } else {
+      current += c;
+    }
+  }
+  tools.push(current);
+  return tools.filter(Boolean);
+}
+
+export function claudeArgs(schema: unknown, model: string, access: CliAccess = { directories: [], extraArguments: [] }): string[] {
+  const extra = access.extraArguments;
+  const allowed = allowedTools(extra);
   // Built-in tools by name, e.g. "WebFetch" or "Bash(git log *)" → Bash.
-  const builtIn = extra.filter((t) => !t.startsWith('mcp__')).map((t) => t.replace(/\(.*$/, ''));
+  const builtIn = allowed.filter((t) => !t.startsWith('mcp__')).map((t) => t.replace(/\(.*$/, ''));
   const tools = [...new Set(['Read', 'Grep', 'Glob', ...builtIn])];
   const args = [
     '-p',
@@ -176,25 +319,57 @@ export function claudeArgs(schema: unknown, model: string, access: ClaudeAccess 
     tools.join(','),
     '--disable-slash-commands',
   ];
-  if (mcp.length === 0) {
+  if (!allowed.some((t) => t.startsWith('mcp__')) && !extra.some((a) => a.startsWith('--mcp-config'))) {
     // Keep the context small and fast when no MCP tool is wanted.
     args.push('--strict-mcp-config');
   }
-  if (extra.length > 0) {
-    // Nobody can answer a permission prompt in a one-shot run, so these are allowed up front.
-    args.push(`--allowedTools=${extra.join(',')}`);
-  }
-  for (const dir of access.directories.map((d) => d.trim()).filter(Boolean)) {
+  for (const dir of access.directories) {
     args.push(`--add-dir=${expandHome(dir)}`);
   }
   if (model) {
     args.push('--model', model);
   }
-  return args;
+  return [...args, ...extra];
+}
+
+/** `codex exec` in its read-only sandbox, prompt on stdin ("-"). */
+export function codexArgs(model: string, extra: string[] = []): string[] {
+  const args = ['exec', '--sandbox', 'read-only', '--skip-git-repo-check'];
+  if (model) {
+    args.push('--model', model);
+  }
+  return [...args, ...extra, '-'];
+}
+
+/**
+ * Gemini CLI headless: the prompt comes on stdin, `--prompt` only adds a line after it. Without a
+ * terminal it uses no tool that needs approval, so it can read but not change files.
+ */
+export function geminiArgs(model: string, directories: string[] = [], extra: string[] = []): string[] {
+  const args = ['--output-format', 'json'];
+  if (model) {
+    args.push('--model', model);
+  }
+  if (directories.length > 0) {
+    args.push('--include-directories', directories.map(expandHome).join(','));
+  }
+  return [...args, ...extra, '--prompt', 'Answer as the instructions above say.'];
 }
 
 function expandHome(dir: string): string {
   return dir === '~' || dir.startsWith('~/') ? path.join(os.homedir(), dir.slice(1)) : dir;
+}
+
+/** The claude binary bundled with the Claude Code VS Code extension, if installed. */
+function bundledClaude(): string | null {
+  const extension = vscode.extensions.getExtension(CLAUDE_EXTENSION_ID);
+  if (extension) {
+    const binary = path.join(extension.extensionPath, 'resources', 'native-binary', process.platform === 'win32' ? 'claude.exe' : 'claude');
+    if (existsSync(binary)) {
+      return binary;
+    }
+  }
+  return null;
 }
 
 /** Any chat model registered in VS Code (GitHub Copilot, or other extensions that provide models). */
@@ -203,7 +378,7 @@ async function languageModelProvider(id: string): Promise<AiProvider> {
   const model = models[0];
   if (!model) {
     throw new Error(
-      id ? `The language model "${id}" is not available. Run "Sift: Choose AI".` : 'No VS Code language model is available. Run "Sift: Choose AI".',
+      id ? `The language model "${id}" is not available. Run "Sift: Choose AI…".` : 'No VS Code language model is available. Run "Sift: Choose AI…".',
     );
   }
   return {
@@ -229,7 +404,7 @@ async function languageModelProvider(id: string): Promise<AiProvider> {
   };
 }
 
-/** A command line tool: prompt on stdin, answer (containing the JSON) on stdout. */
+/** A custom command: prompt on stdin, answer (containing the JSON) on stdout. */
 export class CommandProvider implements AiProvider {
   readonly name: string;
 
@@ -240,21 +415,6 @@ export class CommandProvider implements AiProvider {
   async ask(request: AiRequest, signal: AbortSignal): Promise<unknown> {
     return extractJson(await runInLoginShell(this.command, request.cwd, request.prompt, signal));
   }
-}
-
-/** The setting, else the binary bundled with the Claude Code VS Code extension, else null (use the shell's `claude`). */
-export function findClaudeBinary(setting: string): string | null {
-  if (setting.trim()) {
-    return setting.trim();
-  }
-  const extension = vscode.extensions.getExtension(CLAUDE_EXTENSION_ID);
-  if (extension) {
-    const binary = path.join(extension.extensionPath, 'resources', 'native-binary', process.platform === 'win32' ? 'claude.exe' : 'claude');
-    if (existsSync(binary)) {
-      return binary;
-    }
-  }
-  return null;
 }
 
 function runInLoginShell(command: string, cwd: string, input: string, signal: AbortSignal): Promise<string> {

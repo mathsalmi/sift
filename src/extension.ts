@@ -2,6 +2,7 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { AiService } from './ai/AiService';
 import { chooseProvider, providerLabel, providerShortLabel, resolveProvider } from './ai/providers';
+import { migrateAiSettings } from './ai/settings';
 import { ReviewController } from './controller/ReviewController';
 import type { FileStatus } from './core/types';
 import { GitRunner } from './git/GitRunner';
@@ -34,6 +35,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   const git = new GitRunner(root);
   const gitDir = (await git.run(['rev-parse', '--absolute-git-dir'])).trim();
+  // Settings saved by earlier versions (sift.ai.claudeCodeModel, …) move to the generic ones.
+  await migrateAiSettings().catch(() => undefined);
   const config = vscode.workspace.getConfiguration('sift');
   const maxMb = config.get<number>('snapshotMaxFileSizeMB', 5);
   const snapshots = await SnapshotService.create(git, Math.round(maxMb * 1024 * 1024));

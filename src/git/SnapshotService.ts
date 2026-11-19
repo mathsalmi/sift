@@ -57,7 +57,9 @@ export class SnapshotService {
 
   /** File content at a tree-ish (snapshot tree sha, commit sha or HEAD); null when the file is absent there. */
   async show(treeish: string, filePath: string): Promise<string | null> {
-    const result = await this.git.exec(['show', `${treeish}:${filePath}`], { okCodes: [0, 128] });
+    // "blob:<sha>" is a file's content on its own, e.g. as it was approved.
+    const args = treeish.startsWith('blob:') ? ['cat-file', 'blob', treeish.slice(5)] : ['show', `${treeish}:${filePath}`];
+    const result = await this.git.exec(args, { okCodes: [0, 128] });
     if (result.exitCode !== 0) {
       return null;
     }

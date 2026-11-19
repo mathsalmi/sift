@@ -42,6 +42,8 @@ export interface ReviewFile {
   approvedBlob?: string;
   /** The file changed after it was approved, so it went back to In progress. */
   changedSinceApproval?: boolean;
+  /** With `changedSinceApproval`: git's content id of what was approved, to diff against what changed since. */
+  approvedBefore?: string;
   /** Derived from git, never saved (as are the line counts and `binary`). */
   changeType: ChangeType;
   adds: number | null;

@@ -158,6 +158,30 @@ describe('ReviewController end to end', () => {
     expect(controller.review?.findFile('src/a.ts')).toMatchObject({ status: 'in-progress', changedSinceApproval: true });
   });
 
+  it('diffs a file edited after approval against what was approved', async () => {
+    repo.write('src/a.ts', 'one\ntwo\n');
+    await controller.startReview();
+    const id = await controller.newCommit('A');
+    await controller.moveFiles(['src/a.ts'], id);
+    await controller.startCommit(id);
+    await controller.setStatus(['src/a.ts'], 'done');
+
+    repo.write('src/a.ts', 'one\nTWO\n');
+    await controller.refresh();
+    await controller.openDiff('src/a.ts');
+
+    const { left, title } = lastDiff();
+    expect(title).toBe('a.ts (approved ↔ now · changed since approval)');
+    expect(left.query).toMatch(/^blob:[0-9a-f]{40}$/);
+    const git = new GitRunner(repo.dir);
+    expect(await git.run(['cat-file', 'blob', left.query.slice(5)])).toBe('one\ntwo\n');
+
+    // Approving again goes back to the whole change.
+    await controller.setStatus(['src/a.ts'], 'done');
+    await controller.openDiff('src/a.ts');
+    expect(lastDiff().title).toBe('a.ts (HEAD ↔ v0 · cumulative)');
+  });
+
   it('saves only decisions and reads the rest back from git', async () => {
     repo.write('src/a.ts', 'a changed\n');
     repo.write('src/b.ts', 'b changed\n');

@@ -333,6 +333,7 @@ export class ReviewModel {
         file.approvedBlob = blob; // approved before approvals were tied to content
       } else if (file.approvedBlob !== blob) {
         file.status = 'in-progress';
+        file.approvedBefore = file.approvedBlob;
         file.approvedBlob = undefined;
         file.changedSinceApproval = true;
         outcome.unapproved.push(file.path);
@@ -547,6 +548,7 @@ export class ReviewModel {
       }
       file.status = status;
       file.changedSinceApproval = undefined;
+      file.approvedBefore = undefined;
       file.approvedBlob = status === 'done' ? blobs?.get(filePath) : undefined;
       if (status === 'done') {
         file.changedInIteration = undefined;

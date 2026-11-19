@@ -7,7 +7,7 @@ import { excludedEntries, ignorePaths, trackedPaths, unexcludePatterns, type Exc
 import type { FileStatus, IterationAuthor, PlanInput, ReviewThread } from '../core/types';
 import type { GitRunner } from '../git/GitRunner';
 import { commitChanges, commitPaths, currentHead, fileDiff, hasStagedChanges, listChanges, operationInProgress } from '../git/changes';
-import { blobHashes, inHeadHistory, lastTouches, readCommitRefs, setCommitRef } from '../git/history';
+import { blobHashes, DELETED_BLOB, hasBlob, inHeadHistory, keepBlobs, lastTouches, readCommitRefs, setCommitRef } from '../git/history';
 import { type SnapshotService, sessionRefPrefix, snapshotRef } from '../git/SnapshotService';
 import { excludeStateDir, type StateStore } from '../state/StateStore';
 import { SCHEME, snapshotUri } from '../ui/SnapshotContentProvider';
@@ -339,8 +339,12 @@ export class ReviewController implements vscode.Disposable {
 
   async setStatus(paths: string[], status: FileStatus): Promise<void> {
     // An approval covers the content as it is now; editing the file later takes it back.
-    const blobs = status === 'done' ? await blobHashes(this.git, paths) : undefined;
-    this.require().setStatus(paths, status, blobs);
+    const model = this.require();
+    const blobs = status === 'done' ? await blobHashes(this.git, paths, true) : undefined;
+    if (blobs) {
+      await keepBlobs(this.git, model.state.session.id, blobs.values());
+    }
+    model.setStatus(paths, status, blobs);
     await this.persist();
   }
 
@@ -514,6 +518,10 @@ export class ReviewController implements vscode.Disposable {
       left = from ? snapshotUri(from.treeSha, filePath) : snapshotUri('HEAD', filePath);
       right = to ? snapshotUri(to.treeSha, filePath) : workingTree;
       title = `${name} (${from ? version(from.n) : 'HEAD'} ↔ ${to ? version(to.n) : 'now'})`;
+    } else if (this.diffMode === 'round' && file.changedSinceApproval && file.approvedBefore && (await this.hasApproved(file.approvedBefore))) {
+      // Edited after approval: only what changed since then.
+      left = file.approvedBefore === DELETED_BLOB ? snapshotUri('empty', filePath) : snapshotUri(`blob:${file.approvedBefore}`, filePath);
+      title = `${name} (approved ↔ now · changed since approval)`;
     } else if (this.diffMode === 'round' && latest && previous && file.changedInIteration !== undefined) {
       // The file's last change, while it is unseen; once approved, the whole change again.
       left = snapshotUri(previous.treeSha, filePath);
@@ -526,6 +534,10 @@ export class ReviewController implements vscode.Disposable {
     if (model.markOpened(filePath)) {
       await this.persist();
     }
+  }
+
+  private async hasApproved(blob: string): Promise<boolean> {
+    return blob === DELETED_BLOB || hasBlob(this.git, blob);
   }
 
   /** Path of the file shown in the active editor, when it belongs to the review. */

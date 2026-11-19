@@ -13,6 +13,7 @@ When an AI (or you) changes hundreds of files in one go, reviewing a single gian
 - **Your choice of AI:** Claude Code (uses your Claude login, e.g. through the Claude Code extension), any model VS Code exposes (GitHub Copilot or other extensions), or any command line tool.
 - **Versions per file:** Sift freezes your files in a snapshot when a commit's review starts and after each AI edit, and every file gets its own version numbers: a file goes from v0 to v1 only when a round changed it, so an untouched file stays at v0 while another reaches v7. You can diff:
   - **Latest change** ("This round"): the file's previous version ↔ working tree, while the change is unseen.
+  - **Changed since approval:** a file you edit after approving it shows only that edit: the approved content ↔ working tree.
   - **Cumulative:** HEAD ↔ working tree, i.e. what will be committed.
   - **Any of the file's versions ↔ now,** e.g. v1 ↔ working tree.
 
@@ -136,7 +137,7 @@ Also in the Sift view and command palette: Plan commits with AI · Choose AI… 
 - **Comments:** stored in the state file and anchored by line text, so they follow code that moves. A thread whose line is gone shows as outdated.
 - **State:** `.sift/state.json` holds only your decisions: the plan, file assignments, approvals, comments. What git knows is read from git every time and never saved: which files changed and how, and which planned commits are committed. Each commit Sift makes is recorded in `refs/sift/<session>/<commit>/commit`; nothing is added to commit messages.
 - **Commits made outside Sift** (terminal, Source Control view, rebase, squash) are picked up as they happen, and when VS Code starts. A planned commit whose files no longer differ from HEAD is committed, linked to the newest commit that touched them; if no commit touched them they were reverted and the commit leaves the plan. A commit that leaves HEAD's history (`git reset`) goes back to the plan. Commits you created empty are left alone.
-- **Approvals** cover the file's content when you approved it. Edit the file afterwards and it goes back to In progress ("changed since approval"), so a commit never includes code you didn't see.
+- **Approvals** cover the file's content when you approved it. Edit the file afterwards and it goes back to In progress ("changed since approval"), so a commit never includes code you didn't see. Its diff then shows only what changed since you approved it; Sift keeps the approved content in git under `refs/sift/<session>/approved/`.
 - **Approve and commit:** catches up with git first, then refuses if the index already has staged changes.
 - **Start over:** deletes the review state and snapshot refs. Your files and commits are untouched.
 

@@ -75,7 +75,7 @@ export async function lastTouches(git: GitRunner, base: string, paths: string[])
 }
 
 /** Git's content id of each file as it is now on disk; DELETED_BLOB when the file is gone. */
-export async function blobHashes(git: GitRunner, paths: string[]): Promise<Map<string, string>> {
+export async function blobHashes(git: GitRunner, paths: string[], write = false): Promise<Map<string, string>> {
   const hashes = new Map<string, string>();
   const present: string[] = [];
   for (const filePath of new Set(paths)) {
@@ -87,11 +87,30 @@ export async function blobHashes(git: GitRunner, paths: string[]): Promise<Map<s
     }
   }
   if (present.length > 0) {
-    const out = await git.run(['hash-object', '--stdin-paths'], { input: present.join('\n') + '\n' });
+    const out = await git.run(['hash-object', ...(write ? ['-w'] : []), '--stdin-paths'], { input: present.join('\n') + '\n' });
     out
       .trim()
       .split('\n')
       .forEach((sha, i) => hashes.set(present[i], sha.trim()));
   }
   return hashes;
+}
+
+/**
+ * Keeps approved content in git, so "changed since approval" can diff against it later. A ref per
+ * blob stops gc from pruning it; the refs sit under the session and go away with "Start over".
+ */
+export async function keepBlobs(git: GitRunner, sessionId: string, blobs: Iterable<string>): Promise<void> {
+  const lines = [...new Set(blobs)]
+    .filter((sha) => sha !== DELETED_BLOB)
+    .map((sha) => `update ${REF_ROOT}/${sessionId}/approved/${sha} ${sha}\n`);
+  if (lines.length > 0) {
+    await git.run(['update-ref', '--stdin'], { input: lines.join('') });
+  }
+}
+
+/** Whether git has this blob (approvals saved before approved content was kept may not). */
+export async function hasBlob(git: GitRunner, sha: string): Promise<boolean> {
+  const result = await git.exec(['cat-file', '-e', `${sha}^{blob}`], { okCodes: [0, 1, 128] });
+  return result.exitCode === 0;
 }

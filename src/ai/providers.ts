@@ -4,6 +4,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { extractJson } from './prompts';
+import { REPO_TOOLS, runRepoTool } from './repoTools';
 import { aiSettings, updateAiSettings, type AiSettings, type ProviderKind } from './settings';
 import type { AiProvider, AiRequest } from './types';
 
@@ -387,21 +388,61 @@ async function languageModelProvider(id: string): Promise<AiProvider> {
       const cancel = new vscode.CancellationTokenSource();
       signal.addEventListener('abort', () => cancel.cancel());
       try {
-        const response = await model.sendRequest(
-          [vscode.LanguageModelChatMessage.User(request.prompt)],
-          { justification: 'Sift asks the model to plan commits and answer your review comments.' },
-          cancel.token,
-        );
-        let text = '';
-        for await (const chunk of response.text) {
-          text += chunk;
-        }
-        return extractJson(text);
+        return extractJson(await askWithRepoTools(model, request, cancel.token));
       } finally {
         cancel.dispose();
       }
     },
   };
+}
+
+/** Tool rounds before the model must answer: enough to look around, bounded so a request ends. */
+const MAX_TOOL_ROUNDS = 12;
+const JUSTIFICATION = 'Sift asks the model to plan commits and answer your review comments.';
+
+/**
+ * Asks a VS Code model, letting it read the repository with Sift's read-only tools first (read a
+ * file, search, list files), like the command line AIs do. Returns the model's final text.
+ */
+async function askWithRepoTools(model: vscode.LanguageModelChat, request: AiRequest, token: vscode.CancellationToken): Promise<string> {
+  const tools: vscode.LanguageModelChatTool[] = REPO_TOOLS.map((t) => ({ ...t }));
+  const messages = [vscode.LanguageModelChatMessage.User(request.prompt)];
+  let useTools = true;
+  for (let round = 0; ; round++) {
+    // The last round offers no tools, so the model has to answer.
+    const offer = useTools && round < MAX_TOOL_ROUNDS;
+    let response: vscode.LanguageModelChatResponse;
+    try {
+      response = await model.sendRequest(messages, { justification: JUSTIFICATION, tools: offer ? tools : undefined }, token);
+    } catch (error) {
+      if (!offer || round > 0 || token.isCancellationRequested) {
+        throw error;
+      }
+      // Some models don't take tools: ask again with the prompt alone.
+      useTools = false;
+      round--;
+      continue;
+    }
+    let text = '';
+    const calls: vscode.LanguageModelToolCallPart[] = [];
+    for await (const part of response.stream) {
+      if (part instanceof vscode.LanguageModelTextPart) {
+        text += part.value;
+      } else if (part instanceof vscode.LanguageModelToolCallPart) {
+        calls.push(part);
+      }
+    }
+    if (calls.length === 0) {
+      return text;
+    }
+    const results = await Promise.all(calls.map((call) => runRepoTool(request.cwd, call.name, call.input)));
+    messages.push(vscode.LanguageModelChatMessage.Assistant([...(text ? [new vscode.LanguageModelTextPart(text)] : []), ...calls]));
+    messages.push(
+      vscode.LanguageModelChatMessage.User(
+        calls.map((call, i) => new vscode.LanguageModelToolResultPart(call.callId, [new vscode.LanguageModelTextPart(results[i])])),
+      ),
+    );
+  }
 }
 
 /** A custom command: prompt on stdin, answer (containing the JSON) on stdout. */

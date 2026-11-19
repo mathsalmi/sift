@@ -74,7 +74,7 @@ Click the AI's name in the status bar (next to Sift's review progress), or run *
 | **Claude Code** | `claude -p` with read-only tools (`Read`, `Grep`, `Glob`), no MCP servers, and a JSON schema for the answer. Uses the binary bundled with the Claude Code extension, else `claude` from your login shell. |
 | **Codex** | `codex exec --sandbox read-only -`, prompt on stdin. |
 | **Gemini CLI** | `gemini --output-format json`, prompt on stdin. Run without a terminal, it uses no tool that needs approval, so it reads but doesn't write. |
-| **VS Code model** | Any model available in VS Code, e.g. from GitHub Copilot. VS Code asks you once to allow Sift to use it. |
+| **VS Code model** | Any model available in VS Code, e.g. from GitHub Copilot. Sift gives it read-only tools (read a file, search, list files, all inside the repo) so it can look around like the command line AIs. VS Code asks you once to allow Sift to use the model. |
 | **Custom command** | Any command, run in your login shell at the repo root. It gets the prompt on stdin and must print an answer containing the JSON. |
 
 For the command line AIs, Choose AI… shows which ones it found and then asks for the model (or the tool's default). They use your own login and subscription.

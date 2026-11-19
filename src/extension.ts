@@ -5,7 +5,7 @@ import { chooseProvider, providerLabel, providerShortLabel, resolveProvider } fr
 import { migrateAiSettings } from './ai/settings';
 import { registerAgentTools } from './ai/agentTools';
 import { ReviewController } from './controller/ReviewController';
-import type { FileStatus } from './core/types';
+import type { FileStatus, PlanCommit } from './core/types';
 import { GitRunner } from './git/GitRunner';
 import { SnapshotService } from './git/SnapshotService';
 import { StateStore } from './state/StateStore';
@@ -497,6 +497,68 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   register('sift.previousFile', openAdjacent(-1));
   register('sift.nextFile', openAdjacent(1));
 
+  /** The planned commits that can be committed now: the approved ones at the head of the plan, in order. */
+  const readyCommits = () => {
+    const model = controller.review;
+    const ready: PlanCommit[] = [];
+    for (const commit of model?.commitsInOrder() ?? []) {
+      if (commit.status === 'committed') {
+        continue;
+      }
+      if (model!.commitReviewStatus(commit.id) !== 'approved') {
+        break;
+      }
+      ready.push(commit);
+    }
+    return ready;
+  };
+
+  /** Commits every ready commit, in order, after one confirmation. Returns how many it made. */
+  const commitReady = async (andPush: boolean): Promise<number> => {
+    const ready = readyCommits();
+    if (ready.length === 0) {
+      void vscode.window.showInformationMessage('No approved commit is waiting to be committed.');
+      return 0;
+    }
+    const paths = ready.flatMap((c) => controller.review!.filesOf(c.id).map((f) => f.path));
+    if (!(await confirmUnresolved(paths, 'Commit'))) {
+      return 0;
+    }
+    const action = andPush ? 'Commit and push' : 'Commit';
+    const choice = await vscode.window.showInformationMessage(
+      ready.length === 1 ? `${action} "${ready[0].message.split('\n')[0]}"?` : `${action} ${ready.length} approved commits?`,
+      { modal: true, detail: ready.length === 1 ? undefined : ready.map((c) => `${c.order}. ${c.message.split('\n')[0]}`).join('\n') },
+      action,
+    );
+    if (choice !== action) {
+      return 0;
+    }
+    for (const commit of ready) {
+      if (controller.review?.state.session.currentCommitId !== commit.id) {
+        await controller.startCommit(commit.id);
+      }
+      await controller.approveCurrent();
+    }
+    void vscode.window.showInformationMessage(`Committed ${ready.length} commit(s).${andPush ? ' Pushing…' : ''}`);
+    return ready.length;
+  };
+
+  /** Pushes with VS Code's Git, which handles sign-in and publishing a new branch. */
+  const push = async () => {
+    await vscode.commands.executeCommand('git.push');
+    await updateShipContext();
+  };
+
+  register('sift.commitApproved', async () => {
+    await commitReady(false);
+  });
+  register('sift.commitApprovedAndPush', async () => {
+    if ((await commitReady(true)) > 0) {
+      await push();
+    }
+  });
+  register('sift.push', push);
+
   register('sift.approveCommit', async (node?: PlanNode) => {
     const model = controller.review;
     const commitId = commitIdOf(node) ?? model?.state.session.currentCommitId;
@@ -727,6 +789,25 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   updateFileContext();
   context.subscriptions.push(controller.onDidChange(updateFileContext));
 
+  /**
+   * What's left to ship, for the "every file is approved" view: approved commits waiting to be
+   * committed, and commits not pushed yet (or a branch never published).
+   */
+  const updateShipContext = async () => {
+    void vscode.commands.executeCommand('setContext', 'sift.readyToCommit', readyCommits().length > 0);
+    const upstream = await git.exec(['rev-list', '--count', '@{upstream}..HEAD'], { okCodes: [0, 128] }).catch(() => null);
+    let unpushed = false;
+    if (upstream?.exitCode === 0) {
+      unpushed = Number(upstream.stdout.trim()) > 0;
+    } else {
+      // No upstream: worth publishing once Sift made a commit on this branch.
+      unpushed = controller.review?.state.commits.some((c) => c.status === 'committed') ?? false;
+    }
+    void vscode.commands.executeCommand('setContext', 'sift.unpushed', unpushed);
+  };
+  void updateShipContext();
+  context.subscriptions.push(controller.onDidChange(() => void updateShipContext()));
+
   const updateActiveFileContext = () => {
     const filePath = controller.activeFilePath();
     const file = filePath ? controller.review?.findFile(filePath) : undefined;
@@ -813,8 +894,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   };
   // Commits, resets and branch switches move HEAD; its reflog and refs change with it.
   const headWatcher = vscode.workspace.createFileSystemWatcher(
-    new vscode.RelativePattern(vscode.Uri.file(gitDir), '{HEAD,logs/HEAD,refs/heads/**}'),
+    new vscode.RelativePattern(vscode.Uri.file(gitDir), '{HEAD,logs/HEAD,refs/heads/**,refs/remotes/**}'),
   );
+  // A push moves the remote refs: what's left to push changes without any review change.
+  const onHeadChange = () => {
+    scheduleSync();
+    void updateShipContext();
+  };
   // Edits to .git/info/exclude (by Sift or by hand) update the "Locally excluded" group.
   const excludePath = await ignoreFile(git, 'exclude');
   const excludeWatcher = vscode.workspace.createFileSystemWatcher(
@@ -827,9 +913,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     watcher.onDidCreate(onFsChange),
     watcher.onDidDelete(onFsChange),
     headWatcher,
-    headWatcher.onDidChange(scheduleSync),
-    headWatcher.onDidCreate(scheduleSync),
-    headWatcher.onDidDelete(scheduleSync),
+    headWatcher.onDidChange(onHeadChange),
+    headWatcher.onDidCreate(onHeadChange),
+    headWatcher.onDidDelete(onHeadChange),
     excludeWatcher,
     excludeWatcher.onDidChange(onExcludeChange),
     excludeWatcher.onDidCreate(onExcludeChange),

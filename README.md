@@ -22,7 +22,7 @@ When an AI (or you) changes hundreds of files in one go, reviewing a single gian
 - **Files as a list or a tree:** switch with the list/tree button in the view title, like the Source Control view. Collapse or expand everything with the button next to it.
 - **Locally excluded files:** a **Locally excluded** group at the end of the plan lists the rules in `.git/info/exclude` (except Sift's own `.sift/`). Click a file to open it; **Remove from .git/info/exclude** (eye button or right-click) brings its changes back into the review. Edits to the file by hand show up right away.
 - **Group by status:** the group button in the view title splits each commit's files into **To do**, **In progress** and **Approved**. Off by default.
-- **Hide approved files:** the eye button in the view title hides files as soon as you approve them, so only what's left to review stays in view; commits with nothing left disappear too. If that empties the view, it offers to show them again. Approved files are shown by default.
+- **Hide approved files:** the eye button in the view title hides files as soon as you approve them, so only what's left to review stays in view; commits with nothing left disappear too. If that empties the view, it offers what's next: **Commit** or **Commit and push** the approved commits, **Push** once everything is committed, or show the approved files again. Approved files are shown by default.
 - **Review status:** files are reviewed as part of a commit: unassigned ones have no checkbox until you move them into one. Tick a file's checkbox to approve it. Sift asks first when the file still has unresolved comments. A commit is **To do** until one file is approved, **In progress** while some are, and **Approved** when all are. Files that change after you approved them go back to In progress.
 - **You stay in control:** the AI never stages or commits. Only your Approve click commits, with your git identity and hooks.
 
@@ -132,7 +132,7 @@ Diff editor buttons: Ask AI · Previous / next file in the commit · Approve / u
 
 Right-click a commit for: Approve and commit · Review this commit · Edit message · Move up / down · Delete. Right-click a file for: Approve / unapprove · Mark in progress / to do · Add to .gitignore · Exclude locally (.git/info/exclude) · Move to commit… (lists the other commits, Unassigned and **New commit…**; with no other commit it goes straight to naming a new one). Right-click a locally excluded file for: Remove from .git/info/exclude. Right-click an editor tab of a review file for **Sift**: Show in Sift sidebar · Approve / unapprove · Mark in progress · Mark to do · Add to .gitignore · Exclude locally · Move to commit….
 
-Also in the Sift view and command palette: Plan commits with AI · Choose AI… · Plan commits manually · New commit · Refresh (re-reads git and the saved state) · Group / stop grouping files by status · Hide / show approved files · Remove from .git/info/exclude · View as tree / list · Collapse / expand all · Discard plan.
+Also in the Sift view and command palette: Plan commits with AI · Choose AI… · Plan commits manually · New commit · Commit approved commits (and push) · Push · Refresh (re-reads git and the saved state) · Group / stop grouping files by status · Hide / show approved files · Remove from .git/info/exclude · View as tree / list · Collapse / expand all · Discard plan.
 
 ## Settings
 

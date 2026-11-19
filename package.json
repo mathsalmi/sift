@@ -43,8 +43,18 @@
       },
       {
         "view": "sift.plan",
+        "contents": "Every file is approved, and approved files are hidden.\n[$(git-commit) Commit](command:sift.commitApproved)\n[$(cloud-upload) Commit and push](command:sift.commitApprovedAndPush)\n[$(eye) Show approved files](command:sift.showDone)",
+        "when": "sift.active && sift.hideDone && sift.readyToCommit"
+      },
+      {
+        "view": "sift.plan",
+        "contents": "Everything is committed, and approved files are hidden.\n[$(cloud-upload) Push](command:sift.push)\n[$(eye) Show approved files](command:sift.showDone)",
+        "when": "sift.active && sift.hideDone && !sift.readyToCommit && sift.unpushed"
+      },
+      {
+        "view": "sift.plan",
         "contents": "Every file is approved, and approved files are hidden.\n[$(eye) Show approved files](command:sift.showDone)",
-        "when": "sift.active && sift.hideDone"
+        "when": "sift.active && sift.hideDone && !sift.readyToCommit && !sift.unpushed"
       }
     ],
     "commands": [
@@ -187,6 +197,24 @@
         "title": "Approve and commit",
         "category": "Sift",
         "icon": "$(check)"
+      },
+      {
+        "command": "sift.commitApproved",
+        "title": "Commit approved commits",
+        "category": "Sift",
+        "icon": "$(git-commit)"
+      },
+      {
+        "command": "sift.commitApprovedAndPush",
+        "title": "Commit approved commits and push",
+        "category": "Sift",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "sift.push",
+        "title": "Push",
+        "category": "Sift",
+        "icon": "$(cloud-upload)"
       },
       {
         "command": "sift.abort",
@@ -701,6 +729,18 @@
         }
       ],
       "commandPalette": [
+        {
+          "command": "sift.commitApproved",
+          "when": "sift.active && sift.readyToCommit"
+        },
+        {
+          "command": "sift.commitApprovedAndPush",
+          "when": "sift.active && sift.readyToCommit"
+        },
+        {
+          "command": "sift.push",
+          "when": "sift.active && sift.unpushed"
+        },
         {
           "command": "sift.groupByStatus",
           "when": "sift.active && !sift.groupByStatus"

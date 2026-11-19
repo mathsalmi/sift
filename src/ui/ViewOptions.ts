@@ -3,8 +3,8 @@ import * as vscode from 'vscode';
 export type ExpandMode = 'default' | 'all' | 'none';
 
 /**
- * How the Plan view shows files: as a list or nested in folders, with or without approved files,
- * and the last "collapse all" / "expand all". The list/tree and approved-files choices are remembered.
+ * How the Plan view shows files: as a list or nested in folders, grouped by status or not, with or
+ * without approved files, and the last "collapse all" / "expand all". All but the last are remembered.
  */
 export class ViewOptions implements vscode.Disposable {
   private readonly changed = new vscode.EventEmitter<void>();
@@ -48,6 +48,17 @@ export class ViewOptions implements vscode.Disposable {
     return this.showDone ? files : files.filter((f) => f.status !== 'done');
   }
 
+  /** Whether each commit's files are split into To do / In progress / Approved. */
+  get groupByStatus(): boolean {
+    return this.memento.get<boolean>('sift.groupByStatus', false);
+  }
+
+  async setGroupByStatus(group: boolean): Promise<void> {
+    await this.memento.update('sift.groupByStatus', group);
+    await this.updateContext();
+    this.changed.fire();
+  }
+
   get collapsed(): boolean {
     return this.expandMode === 'none';
   }
@@ -79,5 +90,6 @@ export class ViewOptions implements vscode.Disposable {
     await vscode.commands.executeCommand('setContext', 'sift.viewAsTree', this.asTree);
     await vscode.commands.executeCommand('setContext', 'sift.treeCollapsed', this.collapsed);
     await vscode.commands.executeCommand('setContext', 'sift.hideDone', !this.showDone);
+    await vscode.commands.executeCommand('setContext', 'sift.groupByStatus', this.groupByStatus);
   }
 }

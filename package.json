@@ -309,6 +309,18 @@
         "icon": "$(eye)"
       },
       {
+        "command": "sift.groupByStatus",
+        "title": "Group files by status",
+        "category": "Sift",
+        "icon": "$(group-by-ref-type)"
+      },
+      {
+        "command": "sift.ungroupByStatus",
+        "title": "Stop grouping files by status",
+        "category": "Sift",
+        "icon": "$(ungroup-by-ref-type)"
+      },
+      {
         "command": "sift.hideDone",
         "title": "Hide approved files",
         "category": "Sift",
@@ -394,6 +406,16 @@
           "command": "sift.chooseAi",
           "when": "view == sift.plan",
           "group": "z@0"
+        },
+        {
+          "command": "sift.groupByStatus",
+          "when": "view == sift.plan && sift.active && !sift.groupByStatus",
+          "group": "navigation@7"
+        },
+        {
+          "command": "sift.ungroupByStatus",
+          "when": "view == sift.plan && sift.active && sift.groupByStatus",
+          "group": "navigation@7"
         },
         {
           "command": "sift.hideDone",
@@ -551,6 +573,14 @@
         }
       ],
       "commandPalette": [
+        {
+          "command": "sift.groupByStatus",
+          "when": "sift.active && !sift.groupByStatus"
+        },
+        {
+          "command": "sift.ungroupByStatus",
+          "when": "sift.active && sift.groupByStatus"
+        },
         {
           "command": "sift.unexclude",
           "when": "sift.active"

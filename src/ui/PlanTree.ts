@@ -1,7 +1,7 @@
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import type { ReviewController } from '../controller/ReviewController';
-import type { PlanCommit, ReviewFile } from '../core/types';
+import type { FileStatus, PlanCommit, ReviewFile } from '../core/types';
 import { changeUri } from './ChangeDecorations';
 import { fileTreeChildren } from './fileTree';
 import { COMMIT_STATUS_LABEL, commitIcon, fileCheckbox, fileDescription, fileIcon } from './icons';
@@ -10,12 +10,20 @@ import type { ViewOptions } from './ViewOptions';
 export type PlanNode =
   | { kind: 'unassigned' }
   | { kind: 'commit'; commitId: string }
-  | { kind: 'dir'; dir: string; label: string; commitId: string | null }
+  | { kind: 'status'; status: FileStatus; commitId: string | null }
+  | { kind: 'dir'; dir: string; label: string; commitId: string | null; status?: FileStatus }
   | { kind: 'file'; path: string; commitId: string | null }
   | { kind: 'excluded' }
   | { kind: 'excluded-entry'; pattern: string };
 
 const MIME = 'application/vnd.code.tree.sift.plan';
+
+/** The groups files fall into when grouped by status, in review order. */
+const STATUS_GROUPS: Array<{ status: FileStatus; label: string; icon: string }> = [
+  { status: 'todo', label: 'To do', icon: 'circle-large-outline' },
+  { status: 'in-progress', label: 'In progress', icon: 'eye' },
+  { status: 'done', label: 'Approved', icon: 'check' },
+];
 
 /** Unassigned → commits → files, with drag-and-drop of files between commits. */
 export class PlanTree implements vscode.TreeDataProvider<PlanNode>, vscode.TreeDragAndDropController<PlanNode> {
@@ -60,13 +68,24 @@ export class PlanTree implements vscode.TreeDataProvider<PlanNode>, vscode.TreeD
       return [];
     }
     const commitId = node.kind === 'unassigned' ? null : node.commitId;
-    const files = this.options.visible(model.filesOf(commitId));
+    let files = this.options.visible(model.filesOf(commitId));
+    if (this.options.groupByStatus && (node.kind === 'commit' || node.kind === 'unassigned')) {
+      return STATUS_GROUPS.filter((g) => files.some((f) => f.status === g.status)).map((g) => ({
+        kind: 'status',
+        status: g.status,
+        commitId,
+      }));
+    }
+    const status = node.kind === 'status' || node.kind === 'dir' ? node.status : undefined;
+    if (status) {
+      files = files.filter((f) => f.status === status);
+    }
     if (!this.options.asTree) {
       return files.map((f) => ({ kind: 'file', path: f.path, commitId }));
     }
     return fileTreeChildren(files, node.kind === 'dir' ? node.dir : '').map((entry) =>
       entry.type === 'dir'
-        ? { kind: 'dir', dir: entry.dir, label: entry.label, commitId }
+        ? { kind: 'dir', dir: entry.dir, label: entry.label, commitId, status }
         : { kind: 'file', path: entry.file.path, commitId },
     );
   }
@@ -75,10 +94,20 @@ export class PlanTree implements vscode.TreeDataProvider<PlanNode>, vscode.TreeD
     if (node.kind === 'excluded-entry') {
       return { kind: 'excluded' };
     }
-    if (node.kind !== 'file' && node.kind !== 'dir') {
+    if (node.kind !== 'file' && node.kind !== 'dir' && node.kind !== 'status') {
       return undefined;
     }
-    const top: PlanNode = node.commitId ? { kind: 'commit', commitId: node.commitId } : { kind: 'unassigned' };
+    const group: PlanNode = node.commitId ? { kind: 'commit', commitId: node.commitId } : { kind: 'unassigned' };
+    if (node.kind === 'status') {
+      return group;
+    }
+    let top: PlanNode = group;
+    if (this.options.groupByStatus) {
+      const status = node.kind === 'dir' ? node.status : this.controller.review?.findFile(node.path)?.status;
+      if (status) {
+        top = { kind: 'status', status, commitId: node.commitId };
+      }
+    }
     if (!this.options.asTree || !this.controller.review) {
       return top;
     }
@@ -126,9 +155,19 @@ export class PlanTree implements vscode.TreeDataProvider<PlanNode>, vscode.TreeD
     if (node.kind === 'commit') {
       return this.commitItem(model.getCommit(node.commitId), model.filesOf(node.commitId));
     }
+    if (node.kind === 'status') {
+      const group = STATUS_GROUPS.find((g) => g.status === node.status) ?? STATUS_GROUPS[0];
+      const count = model.filesOf(node.commitId).filter((f) => f.status === node.status).length;
+      const item = new vscode.TreeItem(group.label, this.options.state(vscode.TreeItemCollapsibleState.Expanded));
+      item.id = this.options.id(`status:${node.commitId ?? 'none'}:${node.status}`);
+      item.description = String(count);
+      item.iconPath = new vscode.ThemeIcon(group.icon);
+      item.contextValue = 'status';
+      return item;
+    }
     if (node.kind === 'dir') {
       const item = new vscode.TreeItem(node.label, this.options.state(vscode.TreeItemCollapsibleState.Expanded));
-      item.id = this.options.id(`dir:${node.commitId ?? 'none'}:${node.dir}`);
+      item.id = this.options.id(`dir:${node.commitId ?? 'none'}:${node.status ?? 'all'}:${node.dir}`);
       item.iconPath = vscode.ThemeIcon.Folder;
       item.resourceUri = vscode.Uri.file(node.dir);
       item.contextValue = 'dir';
@@ -154,7 +193,7 @@ export class PlanTree implements vscode.TreeDataProvider<PlanNode>, vscode.TreeD
     if (target.kind === 'commit') {
       commitId = target.commitId;
     }
-    if (target.kind === 'file' || target.kind === 'dir') {
+    if (target.kind === 'file' || target.kind === 'dir' || target.kind === 'status') {
       commitId = target.commitId;
     }
     try {

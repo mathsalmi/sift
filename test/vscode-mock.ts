@@ -53,3 +53,30 @@ export const commands = {
 export const window: { activeTextEditor: { document: { uri: Uri } } | undefined } = {
   activeTextEditor: undefined,
 };
+
+export class ThemeColor {
+  constructor(readonly id: string) {}
+}
+
+export class ThemeIcon {
+  static readonly File = new ThemeIcon('file');
+  static readonly Folder = new ThemeIcon('folder');
+  constructor(
+    readonly id: string,
+    readonly color?: ThemeColor,
+  ) {}
+}
+
+export enum TreeItemCollapsibleState {
+  None = 0,
+  Collapsed = 1,
+  Expanded = 2,
+}
+
+export class FileDecoration {
+  constructor(
+    readonly badge?: string,
+    readonly tooltip?: string,
+    readonly color?: ThemeColor,
+  ) {}
+}

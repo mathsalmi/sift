@@ -538,6 +538,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   register('sift.expandAll', () => viewOptions.setCollapsed(false));
   register('sift.viewAsTree', () => viewOptions.setAsTree(true));
   register('sift.viewAsList', () => viewOptions.setAsTree(false));
+  register('sift.groupByStatus', () => viewOptions.setGroupByStatus(true));
+  register('sift.ungroupByStatus', () => viewOptions.setGroupByStatus(false));
   register('sift.hideDone', () => viewOptions.setShowDone(false));
   register('sift.showDone', () => viewOptions.setShowDone(true));
 

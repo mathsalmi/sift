@@ -32,10 +32,6 @@
         {
           "id": "sift.plan",
           "name": "Plan"
-        },
-        {
-          "id": "sift.board",
-          "name": "Board"
         }
       ]
     },
@@ -197,12 +193,6 @@
         "title": "Approve and commit",
         "category": "Sift",
         "icon": "$(check)"
-      },
-      {
-        "command": "sift.toggleBoardScope",
-        "title": "Board: toggle current commit / all commits",
-        "category": "Sift",
-        "icon": "$(filter)"
       },
       {
         "command": "sift.abort",
@@ -396,11 +386,6 @@
           "group": "z@1"
         },
         {
-          "command": "sift.toggleBoardScope",
-          "when": "view == sift.board && sift.active",
-          "group": "navigation@1"
-        },
-        {
           "command": "sift.toggleExplanations",
           "when": "view == sift.plan && sift.active",
           "group": "navigation@6"
@@ -438,36 +423,6 @@
         {
           "command": "sift.expandAll",
           "when": "view == sift.plan && sift.active && sift.treeCollapsed",
-          "group": "navigation@9"
-        },
-        {
-          "command": "sift.hideDone",
-          "when": "view == sift.board && sift.active && !sift.hideDone",
-          "group": "navigation@7"
-        },
-        {
-          "command": "sift.showDone",
-          "when": "view == sift.board && sift.active && sift.hideDone",
-          "group": "navigation@7"
-        },
-        {
-          "command": "sift.viewAsTree",
-          "when": "view == sift.board && sift.active && !sift.viewAsTree",
-          "group": "navigation@8"
-        },
-        {
-          "command": "sift.viewAsList",
-          "when": "view == sift.board && sift.active && sift.viewAsTree",
-          "group": "navigation@8"
-        },
-        {
-          "command": "sift.collapseAll",
-          "when": "view == sift.board && sift.active && !sift.treeCollapsed",
-          "group": "navigation@9"
-        },
-        {
-          "command": "sift.expandAll",
-          "when": "view == sift.board && sift.active && sift.treeCollapsed",
           "group": "navigation@9"
         },
         {

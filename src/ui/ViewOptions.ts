@@ -3,9 +3,8 @@ import * as vscode from 'vscode';
 export type ExpandMode = 'default' | 'all' | 'none';
 
 /**
- * How the Plan and Board views show files: as a list or nested in folders, with or without
- * approved files, and the last "collapse all" / "expand all". Shared by both views; the
- * list/tree and approved-files choices are remembered.
+ * How the Plan view shows files: as a list or nested in folders, with or without approved files,
+ * and the last "collapse all" / "expand all". The list/tree and approved-files choices are remembered.
  */
 export class ViewOptions implements vscode.Disposable {
   private readonly changed = new vscode.EventEmitter<void>();

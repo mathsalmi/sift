@@ -7,7 +7,6 @@ import type { FileStatus } from './core/types';
 import { GitRunner } from './git/GitRunner';
 import { SnapshotService } from './git/SnapshotService';
 import { StateStore } from './state/StateStore';
-import { BoardTree, type BoardNode } from './ui/BoardTree';
 import { ignoreFile, type IgnoreTarget } from './git/ignore';
 import { ChangeDecorations } from './ui/ChangeDecorations';
 import { CommentsManager, type ThreadComment } from './ui/Comments';
@@ -16,7 +15,7 @@ import { SCHEME, SnapshotContentProvider } from './ui/SnapshotContentProvider';
 import { StatusBar } from './ui/StatusBar';
 import { ViewOptions } from './ui/ViewOptions';
 
-type TreeNode = PlanNode | BoardNode;
+type TreeNode = PlanNode;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const folder = vscode.workspace.workspaceFolders?.[0];
@@ -49,16 +48,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const viewOptions = new ViewOptions(context.globalState);
   const planTree = new PlanTree(controller, viewOptions);
   context.subscriptions.push(vscode.window.registerFileDecorationProvider(new ChangeDecorations()));
-  const boardTree = new BoardTree(controller, viewOptions);
 
   const planView = vscode.window.createTreeView('sift.plan', {
     treeDataProvider: planTree,
     dragAndDropController: planTree,
-    canSelectMany: true,
-    manageCheckboxStateManually: true,
-  });
-  const boardView = vscode.window.createTreeView('sift.board', {
-    treeDataProvider: boardTree,
     canSelectMany: true,
     manageCheckboxStateManually: true,
   });
@@ -163,9 +156,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     controller,
     viewOptions,
     planView,
-    boardView,
     planView.onDidChangeCheckboxState(onCheckbox),
-    boardView.onDidChangeCheckboxState(onCheckbox),
     comments,
     statusBar,
     vscode.workspace.registerTextDocumentContentProvider(SCHEME, new SnapshotContentProvider(snapshots)),
@@ -549,11 +540,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   register('sift.viewAsList', () => viewOptions.setAsTree(false));
   register('sift.hideDone', () => viewOptions.setShowDone(false));
   register('sift.showDone', () => viewOptions.setShowDone(true));
-
-  register('sift.toggleBoardScope', async () => {
-    controller.boardShowAll = !controller.boardShowAll;
-    await controller.notify();
-  });
 
   // ---- AI: plan and comment threads ----
 

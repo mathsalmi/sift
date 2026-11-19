@@ -31,7 +31,6 @@ export class ReviewController implements vscode.Disposable {
   readonly onDidChange = this.changed.event;
 
   diffMode: DiffMode = 'round';
-  boardShowAll = false;
 
   constructor(
     readonly root: string,
@@ -54,7 +53,7 @@ export class ReviewController implements vscode.Disposable {
     this.changed.dispose();
   }
 
-  /** Re-renders the UI after a view-only setting changed (diff mode, board scope). */
+  /** Re-renders the UI after a view-only setting changed (diff mode). */
   async notify(): Promise<void> {
     await this.fire();
   }

@@ -79,6 +79,19 @@ Click the AI's name in the status bar (next to Sift's review progress), or run *
 
 For the command line AIs, Choose AI… shows which ones it found and then asks for the model (or the tool's default). They use your own login and subscription.
 
+## Chat agents (Copilot agent mode)
+
+Sift also gives VS Code's chat agents, such as GitHub Copilot in agent mode, tools to drive the review from the chat:
+
+| Tool | Reference | What the agent can do |
+| --- | --- | --- |
+| Read the review | `#siftReview` | See the planned commits, their files and status, and your comments waiting for an answer |
+| Set the commit plan | `#siftPlan` | Split the uncommitted changes into commits. Asks you first when it would replace a plan under review |
+| Explain a line | `#siftExplain` | Add an explanation on a changed line |
+| Answer a comment | `#siftReply` | Reply in a thread after changing the code with its own tools; Sift records the change as a new version |
+
+For example: *"Split my changes into commits with Sift"*, or *"Answer my Sift comments"*. The agent never approves files or commits: that stays your click.
+
 ## Plan file
 
 Sift also picks up `.sift/plan.json` whenever it is written, by hand or by another tool. With no session it starts one; if it would replace a plan under review, Sift asks first.

@@ -3,6 +3,7 @@ import * as vscode from 'vscode';
 import { AiService } from './ai/AiService';
 import { chooseProvider, providerLabel, providerShortLabel, resolveProvider } from './ai/providers';
 import { migrateAiSettings } from './ai/settings';
+import { registerAgentTools } from './ai/agentTools';
 import { ReviewController } from './controller/ReviewController';
 import type { FileStatus } from './core/types';
 import { GitRunner } from './git/GitRunner';
@@ -153,6 +154,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     },
   });
   statusBar = new StatusBar(controller, { busy: () => ai.busy, label: providerLabel, shortLabel: providerShortLabel });
+  // Chat agents (e.g. Copilot's agent mode) can drive the review through Sift's tools.
+  context.subscriptions.push(registerAgentTools(controller));
 
   context.subscriptions.push(
     { dispose: () => ai.dispose() },

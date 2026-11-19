@@ -80,3 +80,31 @@ export class FileDecoration {
     readonly color?: ThemeColor,
   ) {}
 }
+
+export class Disposable {
+  constructor(private readonly callback: () => void) {}
+  static from(...items: Array<{ dispose(): unknown }>): Disposable {
+    return new Disposable(() => items.forEach((i) => i.dispose()));
+  }
+  dispose(): void {
+    this.callback();
+  }
+}
+
+export class LanguageModelTextPart {
+  constructor(readonly value: string) {}
+}
+
+export class LanguageModelToolResult {
+  constructor(readonly content: LanguageModelTextPart[]) {}
+}
+
+/** Tools registered with `lm.registerTool`, by name. */
+export const registeredTools = new Map<string, unknown>();
+
+export const lm = {
+  registerTool: (name: string, tool: unknown) => {
+    registeredTools.set(name, tool);
+    return { dispose: () => registeredTools.delete(name) };
+  },
+};

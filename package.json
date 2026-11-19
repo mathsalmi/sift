@@ -353,6 +353,161 @@
         "icon": "$(copy)"
       }
     ],
+    "languageModelTools": [
+      {
+        "name": "sift_getReview",
+        "toolReferenceName": "siftReview",
+        "displayName": "Sift: read the review",
+        "canBeReferencedInPrompt": true,
+        "icon": "$(checklist)",
+        "userDescription": "The Sift review: planned commits, their files and status, and comments waiting for an answer.",
+        "modelDescription": "Returns the Sift code review of this repository's uncommitted changes: the planned commits in order with their files and review status, unassigned files, and the developer's review comments that wait for an answer (with threadId, file, line and messages). Call it first, before planning commits or answering comments.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {}
+        }
+      },
+      {
+        "name": "sift_setPlan",
+        "toolReferenceName": "siftPlan",
+        "displayName": "Sift: set the commit plan",
+        "canBeReferencedInPrompt": true,
+        "icon": "$(git-commit)",
+        "userDescription": "Split the uncommitted changes into a plan of atomic commits in Sift.",
+        "modelDescription": "Sets the Sift commit plan: splits the repository's uncommitted changes into ordered, atomic commits (foundations first, each commit builds on its own), with an intent, risk notes and explanations on the lines that matter. Read the changes first (e.g. git diff). Replaces commits that are not committed yet. Sift never commits by itself: the developer reviews and approves each commit.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "commits": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "properties": {
+                  "message": {
+                    "type": "string",
+                    "description": "Imperative subject line (max 72 chars), optional body after a blank line."
+                  },
+                  "intent": {
+                    "type": "string",
+                    "description": "What this commit does and why, 1-2 sentences, for the reviewer."
+                  },
+                  "riskNotes": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Spots that deserve careful review."
+                  },
+                  "files": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Repo-relative paths of changed files. Each changed file in exactly one commit; unlisted files stay unassigned."
+                  },
+                  "explanations": {
+                    "type": "array",
+                    "description": "Notes on the lines that carry intent or risk (not on mechanical changes).",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "path": {
+                          "type": "string",
+                          "description": "One of this commit's files."
+                        },
+                        "line": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "description": "1-based line in the current file."
+                        },
+                        "body": {
+                          "type": "string",
+                          "description": "Markdown, max 3 short bullets: what changed here and why."
+                        }
+                      },
+                      "required": [
+                        "path",
+                        "line",
+                        "body"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "message",
+                  "files"
+                ]
+              }
+            }
+          },
+          "required": [
+            "commits"
+          ]
+        }
+      },
+      {
+        "name": "sift_explain",
+        "toolReferenceName": "siftExplain",
+        "displayName": "Sift: explain a line",
+        "canBeReferencedInPrompt": true,
+        "icon": "$(info)",
+        "userDescription": "Add an explanation on a changed line in the Sift review.",
+        "modelDescription": "Adds an explanation for the reviewer on a line of a changed file in the Sift review (shown in the diff editor). Use it for lines that carry intent or risk, not for mechanical changes. One explanation per line; a new one replaces the old.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "description": "Repo-relative path of a changed file."
+            },
+            "line": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "1-based line in the current file."
+            },
+            "body": {
+              "type": "string",
+              "description": "Markdown, max 3 short bullets."
+            }
+          },
+          "required": [
+            "path",
+            "line",
+            "body"
+          ]
+        }
+      },
+      {
+        "name": "sift_reply",
+        "toolReferenceName": "siftReply",
+        "displayName": "Sift: answer a review comment",
+        "canBeReferencedInPrompt": true,
+        "icon": "$(comment-discussion)",
+        "userDescription": "Answer a review comment in Sift, after making the change it asks for.",
+        "modelDescription": "Answers one of the developer's review comments in Sift (threadId from sift_getReview). Make any code change the comment asks for first, with your own editing tools, then reply saying what you changed or why not. Sift records your changes as a new version so the developer sees exactly what changed. Set resolve only when nothing more is needed from the developer.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "threadId": {
+              "type": "string"
+            },
+            "body": {
+              "type": "string",
+              "description": "Markdown reply, short and direct."
+            },
+            "resolve": {
+              "type": "boolean",
+              "description": "Close the thread."
+            }
+          },
+          "required": [
+            "threadId",
+            "body"
+          ]
+        }
+      }
+    ],
     "menus": {
       "view/title": [
         {

@@ -11,7 +11,9 @@ export type PlanNode =
   | { kind: 'unassigned' }
   | { kind: 'commit'; commitId: string }
   | { kind: 'dir'; dir: string; label: string; commitId: string | null }
-  | { kind: 'file'; path: string; commitId: string | null };
+  | { kind: 'file'; path: string; commitId: string | null }
+  | { kind: 'excluded' }
+  | { kind: 'excluded-entry'; pattern: string };
 
 const MIME = 'application/vnd.code.tree.sift.plan';
 
@@ -43,9 +45,15 @@ export class PlanTree implements vscode.TreeDataProvider<PlanNode>, vscode.TreeD
       for (const commit of model.commitsInOrder()) {
         roots.push({ kind: 'commit', commitId: commit.id });
       }
+      if (this.controller.excluded.length > 0) {
+        roots.push({ kind: 'excluded' });
+      }
       return roots;
     }
-    if (node.kind === 'file') {
+    if (node.kind === 'excluded') {
+      return this.controller.excluded.map((e) => ({ kind: 'excluded-entry', pattern: e.pattern }));
+    }
+    if (node.kind === 'file' || node.kind === 'excluded-entry') {
       return [];
     }
     const commitId = node.kind === 'unassigned' ? null : node.commitId;
@@ -61,6 +69,9 @@ export class PlanTree implements vscode.TreeDataProvider<PlanNode>, vscode.TreeD
   }
 
   getParent(node: PlanNode): PlanNode | undefined {
+    if (node.kind === 'excluded-entry') {
+      return { kind: 'excluded' };
+    }
     if (node.kind !== 'file' && node.kind !== 'dir') {
       return undefined;
     }
@@ -97,6 +108,18 @@ export class PlanTree implements vscode.TreeDataProvider<PlanNode>, vscode.TreeD
       item.tooltip = 'Files not yet in any commit. Drag them onto a commit.';
       return item;
     }
+    if (node.kind === 'excluded') {
+      const item = new vscode.TreeItem('Locally excluded', this.options.state(vscode.TreeItemCollapsibleState.Collapsed));
+      item.id = this.options.id('excluded');
+      item.description = `${this.controller.excluded.length} rule(s)`;
+      item.iconPath = new vscode.ThemeIcon('eye-closed', new vscode.ThemeColor('disabledForeground'));
+      item.contextValue = 'excluded';
+      item.tooltip = 'Rules in .git/info/exclude: git ignores these files in this clone only.';
+      return item;
+    }
+    if (node.kind === 'excluded-entry') {
+      return this.excludedItem(node.pattern);
+    }
     if (node.kind === 'commit') {
       return this.commitItem(model.getCommit(node.commitId), model.filesOf(node.commitId));
     }
@@ -120,7 +143,7 @@ export class PlanTree implements vscode.TreeDataProvider<PlanNode>, vscode.TreeD
 
   async handleDrop(target: PlanNode | undefined, data: vscode.DataTransfer): Promise<void> {
     const item = data.get(MIME);
-    if (!item || !target) {
+    if (!item || !target || target.kind === 'excluded' || target.kind === 'excluded-entry') {
       return;
     }
     const paths = item.value as string[];
@@ -176,6 +199,26 @@ export class PlanTree implements vscode.TreeDataProvider<PlanNode>, vscode.TreeD
       tooltip.appendMarkdown(`- ⚠ ${escape(note)}\n`);
     }
     item.tooltip = tooltip;
+    return item;
+  }
+
+  private excludedItem(pattern: string): vscode.TreeItem {
+    const entry = this.controller.excluded.find((e) => e.pattern === pattern);
+    const label = entry?.path ? path.posix.basename(entry.path) : pattern;
+    const item = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.None);
+    item.id = `excluded:${pattern}`;
+    item.contextValue = 'excluded-entry';
+    if (entry?.path) {
+      const dir = path.posix.dirname(entry.path);
+      item.description = dir === '.' ? undefined : dir;
+      const uri = vscode.Uri.file(path.join(this.controller.root, entry.path));
+      item.resourceUri = uri;
+      item.iconPath = vscode.ThemeIcon.File;
+      item.command = { command: 'vscode.open', title: 'Open file', arguments: [uri] };
+    } else {
+      item.iconPath = new vscode.ThemeIcon('filter');
+    }
+    item.tooltip = `${pattern}\nin .git/info/exclude`;
     return item;
   }
 

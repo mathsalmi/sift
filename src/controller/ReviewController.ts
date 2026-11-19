@@ -3,7 +3,7 @@ import * as path from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
 import * as vscode from 'vscode';
 import { emptyOutcome, ReviewModel, type SyncOutcome } from '../core/ReviewModel';
-import { ignorePaths, trackedPaths, type IgnoreTarget } from '../git/ignore';
+import { excludedEntries, ignorePaths, trackedPaths, unexcludePatterns, type ExcludeEntry, type IgnoreTarget } from '../git/ignore';
 import type { FileStatus, IterationAuthor, PlanInput, ReviewThread } from '../core/types';
 import type { GitRunner } from '../git/GitRunner';
 import { commitChanges, commitPaths, currentHead, fileDiff, hasStagedChanges, listChanges, operationInProgress } from '../git/changes';
@@ -75,6 +75,7 @@ export class ReviewController implements vscode.Disposable {
 
   /** Takes a loaded state, filling what git knows before anything is shown. */
   private async adopt(state: Awaited<ReturnType<StateStore['load']>>): Promise<void> {
+    this.excluded = await excludedEntries(this.git).catch(() => []);
     this.model = state ? new ReviewModel(state) : null;
     if (this.model) {
       await this.sync(this.model).catch(() => undefined);
@@ -186,6 +187,28 @@ export class ReviewController implements vscode.Disposable {
   }
 
   /** Git-tracked files among `paths`: adding them to an ignore file would not hide their changes. */
+  /** The rules in .git/info/exclude, shown in the plan as "Locally excluded". */
+  excluded: ExcludeEntry[] = [];
+
+  /** Re-reads .git/info/exclude and redraws when its rules changed. */
+  async loadExcluded(): Promise<void> {
+    const entries = await excludedEntries(this.git).catch(() => []);
+    if (JSON.stringify(entries) === JSON.stringify(this.excluded)) {
+      return;
+    }
+    this.excluded = entries;
+    await this.fire();
+  }
+
+  /** Removes rules from .git/info/exclude; their files come back into the review as changes. */
+  async unexclude(patterns: string[]): Promise<void> {
+    await unexcludePatterns(this.git, patterns);
+    await this.loadExcluded();
+    if (this.model) {
+      await this.refresh();
+    }
+  }
+
   async trackedPaths(paths: string[]): Promise<string[]> {
     return trackedPaths(this.git, paths);
   }
@@ -193,6 +216,7 @@ export class ReviewController implements vscode.Disposable {
   /** Adds the files to .gitignore or .git/info/exclude, then drops them from the review. Returns the ignore file. */
   async ignoreFiles(paths: string[], target: IgnoreTarget): Promise<string> {
     const file = await ignorePaths(this.git, paths, target);
+    await this.loadExcluded();
     await this.refresh();
     return file;
   }

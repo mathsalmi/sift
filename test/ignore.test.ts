@@ -3,7 +3,8 @@ import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { GitRunner } from '../src/git/GitRunner';
 import { listChanges } from '../src/git/changes';
-import { ignorePaths, ignorePattern, trackedPaths } from '../src/git/ignore';
+import { excludedEntries, ignorePaths, ignorePattern, trackedPaths, unexcludePatterns } from '../src/git/ignore';
+import { writeFileSync } from 'node:fs';
 import { createRepo, type TempRepo } from './helpers';
 
 let repo: TempRepo;
@@ -57,5 +58,26 @@ describe('trackedPaths', () => {
     expect(await trackedPaths(git, ['src/a.ts', 'new.ts'])).toEqual(['src/a.ts']);
     repo.git('rm', '-qf', 'src/a.ts');
     expect(await trackedPaths(git, ['src/a.ts'])).toEqual(['src/a.ts']);
+  });
+});
+
+describe('excludedEntries / unexcludePatterns', () => {
+  it('lists the rules, without comments or Sift\'s own entry, and removes them so the files come back', async () => {
+    const exclude = path.join(repo.dir, '.git', 'info', 'exclude');
+    writeFileSync(exclude, '# comment\n.sift/\n*.log\n');
+    repo.write('local.env', 'x\n');
+    repo.write('a[1].txt', 'y\n');
+    await ignorePaths(git, ['local.env', 'a[1].txt'], 'exclude');
+
+    expect(await excludedEntries(git)).toEqual([
+      { pattern: '*.log', label: '*.log', path: undefined },
+      { pattern: '/local.env', label: 'local.env', path: 'local.env' },
+      { pattern: '/a\\[1\\].txt', label: 'a[1].txt', path: 'a[1].txt' },
+    ]);
+    expect((await listChanges(git)).map((c) => c.path)).toEqual([]);
+
+    await unexcludePatterns(git, ['/local.env', '.sift/']);
+    expect(readFileSync(exclude, 'utf8')).toBe('# comment\n.sift/\n*.log\n/a\\[1\\].txt\n');
+    expect((await listChanges(git)).map((c) => c.path)).toEqual(['local.env']);
   });
 });

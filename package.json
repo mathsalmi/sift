@@ -308,6 +308,12 @@
         "icon": "$(list-flat)"
       },
       {
+        "command": "sift.unexclude",
+        "title": "Remove from .git/info/exclude",
+        "category": "Sift",
+        "icon": "$(eye)"
+      },
+      {
         "command": "sift.hideDone",
         "title": "Hide approved files",
         "category": "Sift",
@@ -527,6 +533,16 @@
           "group": "1_ignore@2"
         },
         {
+          "command": "sift.unexclude",
+          "when": "view == sift.plan && viewItem == excluded-entry",
+          "group": "inline"
+        },
+        {
+          "command": "sift.unexclude",
+          "when": "view == sift.plan && viewItem == excluded-entry",
+          "group": "1_ignore@1"
+        },
+        {
           "command": "sift.moveToCommit",
           "when": "viewItem =~ /^file-(todo|in-progress|done)$/",
           "group": "2@1"
@@ -575,6 +591,10 @@
         }
       ],
       "commandPalette": [
+        {
+          "command": "sift.unexclude",
+          "when": "sift.active"
+        },
         {
           "command": "sift.hideDone",
           "when": "sift.active && !sift.hideDone"

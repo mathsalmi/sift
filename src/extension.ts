@@ -8,7 +8,7 @@ import { GitRunner } from './git/GitRunner';
 import { SnapshotService } from './git/SnapshotService';
 import { StateStore } from './state/StateStore';
 import { BoardTree, type BoardNode } from './ui/BoardTree';
-import type { IgnoreTarget } from './git/ignore';
+import { ignoreFile, type IgnoreTarget } from './git/ignore';
 import { ChangeDecorations } from './ui/ChangeDecorations';
 import { CommentsManager, type ThreadComment } from './ui/Comments';
 import { PlanTree, type PlanNode } from './ui/PlanTree';
@@ -439,6 +439,30 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   register('sift.ignoreFile', ignore('gitignore'));
   register('sift.excludeFile', ignore('exclude'));
 
+  register('sift.unexclude', async (node?: TreeNode, selected?: TreeNode[]) => {
+    const nodes = selected && selected.length > 0 ? selected : node ? [node] : [];
+    let patterns = nodes.flatMap((n) => (n.kind === 'excluded-entry' ? [n.pattern] : []));
+    if (patterns.length === 0) {
+      if (controller.excluded.length === 0) {
+        void vscode.window.showInformationMessage('.git/info/exclude has no rules to remove.');
+        return;
+      }
+      const picked = await vscode.window.showQuickPick(
+        controller.excluded.map((e) => ({ label: e.label, description: e.path ? undefined : 'pattern', pattern: e.pattern })),
+        { canPickMany: true, placeHolder: 'Rules to remove from .git/info/exclude' },
+      );
+      patterns = (picked ?? []).map((p) => p.pattern);
+      if (patterns.length === 0) {
+        return;
+      }
+    }
+    const labels = new Map(controller.excluded.map((e) => [e.pattern, e.label]));
+    const what = patterns.length === 1 ? (labels.get(patterns[0]) ?? patterns[0]) : `${patterns.length} rules`;
+    await controller.unexclude(patterns);
+    await comments.rerender();
+    void vscode.window.setStatusBarMessage(`$(eye) Removed ${what} from .git/info/exclude`, 4000);
+  });
+
   register('sift.revealFile', async (uri?: vscode.Uri) => {
     const filePath = uri instanceof vscode.Uri ? controller.reviewPath(uri) : controller.activeFilePath();
     const file = filePath ? controller.review?.findFile(filePath) : undefined;
@@ -804,6 +828,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const headWatcher = vscode.workspace.createFileSystemWatcher(
     new vscode.RelativePattern(vscode.Uri.file(gitDir), '{HEAD,logs/HEAD,refs/heads/**}'),
   );
+  // Edits to .git/info/exclude (by Sift or by hand) update the "Locally excluded" group.
+  const excludePath = await ignoreFile(git, 'exclude');
+  const excludeWatcher = vscode.workspace.createFileSystemWatcher(
+    new vscode.RelativePattern(vscode.Uri.file(path.dirname(excludePath)), path.basename(excludePath)),
+  );
+  const onExcludeChange = () => void controller.loadExcluded();
   context.subscriptions.push(
     watcher,
     watcher.onDidChange(onFsChange),
@@ -813,6 +843,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     headWatcher.onDidChange(scheduleSync),
     headWatcher.onDidCreate(scheduleSync),
     headWatcher.onDidDelete(scheduleSync),
+    excludeWatcher,
+    excludeWatcher.onDidChange(onExcludeChange),
+    excludeWatcher.onDidCreate(onExcludeChange),
+    excludeWatcher.onDidDelete(onExcludeChange),
     { dispose: () => clearTimeout(timer) },
   );
 

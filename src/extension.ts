@@ -1,7 +1,7 @@
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { AiService } from './ai/AiService';
-import { chooseProvider, providerLabel, resolveProvider } from './ai/providers';
+import { chooseProvider, providerLabel, providerShortLabel, resolveProvider } from './ai/providers';
 import { ReviewController } from './controller/ReviewController';
 import type { FileStatus } from './core/types';
 import { GitRunner } from './git/GitRunner';
@@ -110,12 +110,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const comments = new CommentsManager(controller, avatars, providerLabel);
 
   /**
-   * Your messages show your GitHub picture when VS Code is signed in to GitHub and Sift may use
-   * that account. `ask` shows VS Code's "allow Sift to use your GitHub account?" prompt.
+   * Your messages show your GitHub picture when Sift may use VS Code's GitHub account. Until then,
+   * `request` leaves a quiet "Sign in with GitHub to use Sift" entry in the Accounts menu; nothing pops up.
    */
-  const updateAvatar = async (ask: boolean): Promise<boolean> => {
+  const updateAvatar = async (request: boolean): Promise<boolean> => {
     const session = await vscode.authentication
-      .getSession('github', ['read:user'], ask ? { createIfNone: true } : { silent: true })
+      .getSession('github', ['read:user'], request ? {} : { silent: true })
       .then(
         (s) => s,
         () => undefined,
@@ -127,7 +127,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }
     return session !== undefined;
   };
-  void updateAvatar(false);
+  void updateAvatar(true);
   context.subscriptions.push(
     vscode.authentication.onDidChangeSessions((event) => {
       if (event.provider.id === 'github') {
@@ -149,7 +149,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       });
     },
   });
-  statusBar = new StatusBar(controller, { busy: () => ai.busy, label: providerLabel });
+  statusBar = new StatusBar(controller, { busy: () => ai.busy, label: providerLabel, shortLabel: providerShortLabel });
 
   context.subscriptions.push(
     { dispose: () => ai.dispose() },
@@ -194,45 +194,21 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   });
 
   register('sift.abort', async () => {
-    if (!context.globalState.get<boolean>(SKIP_START_OVER_WARNING, false)) {
-      const dontAsk = "Start over, don't ask again";
-      const choice = await vscode.window.showWarningMessage(
-        'Start over?',
-        {
-          modal: true,
-          detail:
-            'The current plan is lost: commits not made yet, approvals, comments and versions. Your files and the commits you already made are not touched.',
-        },
-        'Start over',
-        dontAsk,
-      );
-      if (choice === dontAsk) {
-        await context.globalState.update(SKIP_START_OVER_WARNING, true);
-      } else if (choice !== 'Start over') {
-        return;
-      }
+    const choice = await vscode.window.showWarningMessage(
+      'Discard the plan?',
+      {
+        modal: true,
+        detail:
+          'The commits not made yet, approvals, comments and versions are deleted. Your files and the commits you already made are not touched.',
+      },
+      'Discard plan',
+    );
+    if (choice === 'Discard plan') {
+      await controller.abort();
     }
-    await controller.abort();
   });
 
   // ---- plan ----
-
-  register('sift.loadPlan', async () => {
-    const model = controller.review;
-    if (model && model.state.commits.some((c) => c.status !== 'committed')) {
-      const choice = await vscode.window.showWarningMessage(
-        'Loading a plan replaces all commits that are not committed yet.',
-        { modal: true },
-        'Replace',
-      );
-      if (choice !== 'Replace') {
-        return;
-      }
-    }
-    const result = await controller.loadPlan();
-    const extra = result.unassigned > 0 ? ` ${result.unassigned} file(s) left unassigned.` : '';
-    void vscode.window.showInformationMessage(`Loaded ${result.commits} commit(s).${extra}`);
-  });
 
   register('sift.newCommit', async () => {
     const message = await vscode.window.showInputBox({ prompt: 'Commit message', ignoreFocusOut: true });
@@ -620,11 +596,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   register('sift.comment.reply', async (reply: vscode.CommentReply) => {
     await comments.reply(reply);
   });
-  register('sift.useGithubAvatar', async () => {
-    if (await updateAvatar(true)) {
-      void vscode.window.showInformationMessage('Sift: your comments now show your GitHub picture.');
-    }
-  });
   register('sift.comment.copy', async (comment: ThreadComment) => {
     await comments.copy(comment);
   });
@@ -858,7 +829,6 @@ function quoteList(items: string[]): string {
 }
 
 const SKIP_UNRESOLVED_WARNING = 'sift.skipUnresolvedCommentsWarning';
-const SKIP_START_OVER_WARNING = 'sift.skipStartOverWarning';
 
 function guarded(handler: (...args: never[]) => unknown) {
   return async (...args: never[]) => {

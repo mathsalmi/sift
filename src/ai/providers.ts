@@ -44,6 +44,20 @@ export function providerLabel(): string {
   return `Claude Code${model ? ` (${model})` : ''}`;
 }
 
+/** A few words naming the AI, for the status bar. */
+export function providerShortLabel(): string {
+  const config = vscode.workspace.getConfiguration('sift.ai');
+  const kind = config.get<ProviderKind>('provider', 'claude-code');
+  if (kind === 'vscode-lm') {
+    return config.get<string>('languageModel', '') || 'VS Code model';
+  }
+  if (kind === 'command') {
+    return 'Command line AI';
+  }
+  const model = config.get<string>('claudeCodeModel', '');
+  return `Claude Code${model ? ` (${model})` : ''}`;
+}
+
 /** Quick pick of every AI Sift can use here; saves the choice in user settings. */
 export async function chooseProvider(): Promise<boolean> {
   type Item = vscode.QuickPickItem & { apply?: () => Promise<void> };

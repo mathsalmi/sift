@@ -60,12 +60,6 @@
         "icon": "$(refresh)"
       },
       {
-        "command": "sift.loadPlan",
-        "title": "Load plan from .sift/plan.json",
-        "category": "Sift",
-        "icon": "$(list-ordered)"
-      },
-      {
         "command": "sift.planWithAi",
         "title": "Plan commits with AI",
         "category": "Sift",
@@ -196,7 +190,7 @@
       },
       {
         "command": "sift.abort",
-        "title": "Start over…",
+        "title": "Discard plan",
         "category": "Sift"
       },
       {
@@ -357,12 +351,6 @@
         "title": "Copy message",
         "category": "Sift",
         "icon": "$(copy)"
-      },
-      {
-        "command": "sift.useGithubAvatar",
-        "title": "Use my GitHub picture in comments",
-        "category": "Sift",
-        "icon": "$(account)"
       }
     ],
     "menus": {
@@ -371,11 +359,6 @@
           "command": "sift.planWithAi",
           "when": "view == sift.plan",
           "group": "navigation@0"
-        },
-        {
-          "command": "sift.loadPlan",
-          "when": "view == sift.plan && sift.active",
-          "group": "z@3"
         },
         {
           "command": "sift.newCommit",
@@ -401,11 +384,6 @@
           "command": "sift.toggleExplanations",
           "when": "view == sift.plan && sift.active",
           "group": "navigation@6"
-        },
-        {
-          "command": "sift.chooseAi",
-          "when": "view == sift.plan",
-          "group": "z@0"
         },
         {
           "command": "sift.groupByStatus",
@@ -446,11 +424,6 @@
           "command": "sift.expandAll",
           "when": "view == sift.plan && sift.active && sift.treeCollapsed",
           "group": "navigation@9"
-        },
-        {
-          "command": "sift.useGithubAvatar",
-          "when": "view == sift.plan",
-          "group": "z@2"
         }
       ],
       "view/item/context": [

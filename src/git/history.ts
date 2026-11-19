@@ -8,7 +8,7 @@ export const DELETED_BLOB = 'deleted';
 
 /**
  * The private ref that records which git commit a planned commit became. Lives next to the
- * session's snapshot refs, so "Start over" removes it with them. Nothing touches the commit message.
+ * session's snapshot refs, so "Discard plan" removes it with them. Nothing touches the commit message.
  */
 export function commitRef(sessionId: string, commitId: string): string {
   return `${REF_ROOT}/${sessionId}/${commitId}/commit`;
@@ -98,7 +98,7 @@ export async function blobHashes(git: GitRunner, paths: string[], write = false)
 
 /**
  * Keeps approved content in git, so "changed since approval" can diff against it later. A ref per
- * blob stops gc from pruning it; the refs sit under the session and go away with "Start over".
+ * blob stops gc from pruning it; the refs sit under the session and go away with "Discard plan".
  */
 export async function keepBlobs(git: GitRunner, sessionId: string, blobs: Iterable<string>): Promise<void> {
   const lines = [...new Set(blobs)]

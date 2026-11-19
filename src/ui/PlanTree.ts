@@ -39,11 +39,14 @@ export class PlanTree implements vscode.TreeDataProvider<PlanNode>, vscode.TreeD
     }
     if (!node) {
       const roots: PlanNode[] = [];
-      if (model.filesOf(null).length > 0) {
+      // With approved files hidden, a group whose files are all approved has nothing to show.
+      if (this.options.visible(model.filesOf(null)).length > 0) {
         roots.push({ kind: 'unassigned' });
       }
       for (const commit of model.commitsInOrder()) {
-        roots.push({ kind: 'commit', commitId: commit.id });
+        if (this.options.showDone || this.options.visible(model.filesOf(commit.id)).length > 0) {
+          roots.push({ kind: 'commit', commitId: commit.id });
+        }
       }
       if (this.controller.excluded.length > 0) {
         roots.push({ kind: 'excluded' });

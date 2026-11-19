@@ -44,6 +44,11 @@
         "view": "sift.plan",
         "contents": "No review session in this repository.\n[$(sparkle) Plan commits with AI](command:sift.planWithAi)\nThe AI groups your uncommitted changes into commits and explains them.\n[Start review](command:sift.start)\nOr start without AI and create commits by hand.\nAI: [choose which AI to use](command:sift.chooseAi)",
         "when": "!sift.active"
+      },
+      {
+        "view": "sift.plan",
+        "contents": "Every file is approved, and approved files are hidden.\n[$(eye) Show approved files](command:sift.showDone)",
+        "when": "sift.active && sift.hideDone"
       }
     ],
     "commands": [

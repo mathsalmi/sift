@@ -20,7 +20,7 @@ When an AI (or you) changes hundreds of files in one go, reviewing a single gian
 - **Native VS Code:** real diff editor, inline comment threads, go-to-definition and editing inside the diff all keep working.
 - **Files as a list or a tree:** switch with the list/tree button in the view title, like the Source Control view. Collapse or expand everything with the button next to it.
 - **Locally excluded files:** a **Locally excluded** group at the end of the plan lists the rules in `.git/info/exclude` (except Sift's own `.sift/`). Click a file to open it; **Remove from .git/info/exclude** (eye button or right-click) brings its changes back into the review. Edits to the file by hand show up right away.
-- **Hide approved files:** the eye button in the view title hides files as soon as you approve them, so only what's left to review stays in view. Approved files are shown by default.
+- **Hide approved files:** the eye button in the view title hides files as soon as you approve them, so only what's left to review stays in view; commits with nothing left disappear too. If that empties the view, it offers to show them again. Approved files are shown by default.
 - **Review status:** tick a file's checkbox to approve it. Sift asks first when the file still has unresolved comments. A commit is **To do** until one file is approved, **In progress** while some are, and **Approved** when all are. Files that change after you approved them go back to In progress.
 - **You stay in control:** the AI never stages or commits. Only your Approve click commits, with your git identity and hooks.
 

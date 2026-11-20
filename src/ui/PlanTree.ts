@@ -96,6 +96,19 @@ export class PlanTree implements vscode.TreeDataProvider<PlanNode>, vscode.TreeD
     );
   }
 
+  /** The files a folder row stands for: the ones shown under it, with the view's filters. */
+  filesUnder(node: Extract<PlanNode, { kind: 'dir' }>): string[] {
+    const model = this.controller.review;
+    if (!model) {
+      return [];
+    }
+    const committed = node.commitId !== null && model.getCommit(node.commitId).status === 'committed';
+    return this.options
+      .visible(model.filesOf(node.commitId), committed)
+      .filter((f) => f.path.startsWith(node.dir) && (!node.status || f.status === node.status))
+      .map((f) => f.path);
+  }
+
   getParent(node: PlanNode): PlanNode | undefined {
     if (node.kind === 'excluded-entry') {
       return { kind: 'excluded' };
@@ -176,7 +189,8 @@ export class PlanTree implements vscode.TreeDataProvider<PlanNode>, vscode.TreeD
       item.id = this.options.id(`dir:${node.commitId ?? 'none'}:${node.status ?? 'all'}:${node.dir}`);
       item.iconPath = vscode.ThemeIcon.Folder;
       item.resourceUri = vscode.Uri.file(node.dir);
-      item.contextValue = 'dir';
+      const committed = node.commitId !== null && model.getCommit(node.commitId).status === 'committed';
+      item.contextValue = committed ? 'dir-committed' : node.commitId ? 'dir' : 'dir-unassigned';
       return item;
     }
     const file = model.state.files.find((f) => f.path === node.path && f.commitId === node.commitId);

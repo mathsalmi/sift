@@ -247,8 +247,8 @@ export class ReviewController implements vscode.Disposable {
   }
 
   /** Adds the files to .gitignore or .git/info/exclude, then drops them from the review. Returns the ignore file. */
-  async ignoreFiles(paths: string[], target: IgnoreTarget): Promise<string> {
-    const file = await ignorePaths(this.git, paths, target);
+  async ignoreFiles(paths: string[], target: IgnoreTarget, dirs: string[] = []): Promise<string> {
+    const file = await ignorePaths(this.git, paths, target, dirs);
     await this.loadExcluded();
     await this.refresh();
     return file;

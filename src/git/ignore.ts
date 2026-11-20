@@ -23,12 +23,16 @@ export async function ignoreFile(git: GitRunner, target: IgnoreTarget): Promise<
   return path.resolve(git.cwd, excludePath);
 }
 
-/** Appends a pattern per path to the ignore file, skipping ones already there. Returns the file. */
-export async function ignorePaths(git: GitRunner, paths: string[], target: IgnoreTarget): Promise<string> {
+/**
+ * Appends a pattern per path, and one per folder (`dirs`, with a trailing slash), to the ignore file,
+ * skipping ones already there. Returns the file.
+ */
+export async function ignorePaths(git: GitRunner, paths: string[], target: IgnoreTarget, dirs: string[] = []): Promise<string> {
   const file = await ignoreFile(git, target);
   const current = await fs.readFile(file, 'utf8').catch(() => '');
   const existing = new Set(current.split(/\r?\n/).map((line) => line.trim()));
-  const added = [...new Set(paths.map(ignorePattern))].filter((pattern) => !existing.has(pattern));
+  const patterns = [...dirs.map((d) => `${ignorePattern(d.replace(/\/+$/, ''))}/`), ...paths.map(ignorePattern)];
+  const added = [...new Set(patterns)].filter((pattern) => !existing.has(pattern));
   if (added.length > 0) {
     const separator = current.length > 0 && !current.endsWith('\n') ? '\n' : '';
     await fs.mkdir(path.dirname(file), { recursive: true });
@@ -77,7 +81,8 @@ export async function excludedEntries(git: GitRunner): Promise<ExcludeEntry[]> {
     }
     seen.add(pattern);
     const path = patternPath(pattern);
-    entries.push({ pattern, label: path ?? pattern, path });
+    const folder = pattern.endsWith('/') ? patternPath(pattern.slice(0, -1)) : undefined;
+    entries.push({ pattern, label: path ?? (folder !== undefined ? `${folder}/` : pattern), path });
   }
   return entries;
 }

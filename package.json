@@ -728,7 +728,7 @@
         },
         {
           "command": "sift.markDone",
-          "when": "viewItem =~ /^file-(todo|in-progress)$/",
+          "when": "viewItem =~ /^file-(todo|in-progress)$/ || viewItem == dir",
           "group": "1@1"
         },
         {
@@ -738,22 +738,22 @@
         },
         {
           "command": "sift.markInProgress",
-          "when": "viewItem =~ /^file-(todo|in-progress|done)$/",
+          "when": "viewItem =~ /^file-(todo|in-progress|done)$/ || viewItem == dir",
           "group": "1@2"
         },
         {
           "command": "sift.markTodo",
-          "when": "viewItem =~ /^file-(todo|in-progress|done)$/",
+          "when": "viewItem =~ /^file-(todo|in-progress|done)$/ || viewItem == dir",
           "group": "1@3"
         },
         {
           "command": "sift.ignoreFile",
-          "when": "viewItem =~ /^file-(todo|in-progress|done|unassigned)$/",
+          "when": "viewItem =~ /^(file-(todo|in-progress|done|unassigned)|dir|dir-unassigned)$/",
           "group": "1_ignore@1"
         },
         {
           "command": "sift.excludeFile",
-          "when": "viewItem =~ /^file-(todo|in-progress|done|unassigned)$/",
+          "when": "viewItem =~ /^(file-(todo|in-progress|done|unassigned)|dir|dir-unassigned)$/",
           "group": "1_ignore@2"
         },
         {
@@ -768,7 +768,7 @@
         },
         {
           "command": "sift.moveToCommit",
-          "when": "viewItem =~ /^file-(todo|in-progress|done|unassigned)$/",
+          "when": "viewItem =~ /^(file-(todo|in-progress|done|unassigned)|dir|dir-unassigned)$/",
           "group": "2@1"
         },
         {

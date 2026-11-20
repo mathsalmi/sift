@@ -369,7 +369,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       const tabPath = controller.reviewPath(node);
       return tabPath ? [tabPath] : [];
     }
-    return selectedPaths(controller, node, selected);
+    return selectedPaths(controller, planTree, node, selected);
   };
 
   const setStatus = (status: FileStatus) => async (node?: TreeNode | vscode.Uri, selected?: TreeNode[]) => {
@@ -406,6 +406,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   const ignore = (target: IgnoreTarget) => async (node?: TreeNode | vscode.Uri, selected?: TreeNode[]) => {
     const paths = actionPaths(node, selected);
+    // A folder gets one rule for the whole folder, so files added to it later stay hidden too.
+    const rows = node instanceof vscode.Uri ? [] : selected && selected.length > 0 ? selected : node ? [node] : [];
+    const dirs = rows.flatMap((n) => (n.kind === 'dir' ? [n.dir] : []));
+    const files = paths.filter((p) => !dirs.some((d) => p.startsWith(d)));
     if (paths.length === 0) {
       void vscode.window.showInformationMessage('Select a file in the tree or open one in the diff editor.');
       return;
@@ -426,9 +430,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         return;
       }
     }
-    await controller.ignoreFiles(paths, target);
+    await controller.ignoreFiles(files, target, dirs);
     await comments.rerender();
-    const what = paths.length === 1 ? path.posix.basename(paths[0]) : `${paths.length} files`;
+    const what =
+      dirs.length === 1 && files.length === 0
+        ? dirs[0]
+        : paths.length === 1
+          ? path.posix.basename(paths[0])
+          : `${paths.length} files`;
     void vscode.window.setStatusBarMessage(`$(eye-closed) Added ${what} to ${where}`, 4000);
   };
   register('sift.ignoreFile', ignore('gitignore'));
@@ -1119,10 +1128,12 @@ function commitIdOf(node?: PlanNode): string | undefined {
 }
 
 /** Paths from a tree selection, or the file in the active editor. */
-function selectedPaths(controller: ReviewController, node?: TreeNode, selected?: TreeNode[]): string[] {
+function selectedPaths(controller: ReviewController, planTree: PlanTree, node?: TreeNode, selected?: TreeNode[]): string[] {
   const nodes = selected && selected.length > 0 ? selected : node ? [node] : [];
-  const paths = nodes.filter((n) => n.kind === 'file').map((n) => (n as { path: string }).path);
-  if (paths.length > 0) {
+  const paths = [
+    ...new Set(nodes.flatMap((n) => (n.kind === 'file' ? [n.path] : n.kind === 'dir' ? planTree.filesUnder(n) : []))),
+  ];
+  if (paths.length > 0 || nodes.some((n) => n.kind === 'dir')) {
     return paths;
   }
   const active = controller.activeFilePath();

@@ -49,6 +49,18 @@ describe('ignorePaths', () => {
     expect(readFileSync(file, 'utf8')).toContain('/local.env\n');
     expect(await listChanges(git)).toEqual([]);
   });
+
+  it('excludes a whole folder with one rule, listed as the folder', async () => {
+    repo.write('vendor/lib/a.js', 'x\n');
+    repo.write('vendor/b.js', 'x\n');
+
+    const file = await ignorePaths(git, [], 'exclude', ['vendor/']);
+    repo.write('vendor/later.js', 'x\n');
+
+    expect(readFileSync(file, 'utf8')).toContain('/vendor/\n');
+    expect(await listChanges(git)).toEqual([]);
+    expect(await excludedEntries(git)).toEqual([{ pattern: '/vendor/', label: 'vendor/', path: undefined }]);
+  });
 });
 
 describe('trackedPaths', () => {

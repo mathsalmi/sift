@@ -30,7 +30,7 @@ export function aiSettings(): AiSettings {
   };
 }
 
-/** Saves settings in the user's settings, where "Choose AI…" keeps them. */
+/** Saves settings in the user's settings, where "Choose AI" keeps them. */
 export async function updateAiSettings(values: Partial<Pick<AiSettings, 'provider' | 'model' | 'command'>>): Promise<void> {
   const config = vscode.workspace.getConfiguration('sift.ai');
   for (const [key, value] of Object.entries(values)) {

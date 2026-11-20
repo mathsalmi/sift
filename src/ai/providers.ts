@@ -101,7 +101,7 @@ export async function resolveProvider(): Promise<AiProvider> {
   }
   if (settings.provider === 'custom') {
     if (!settings.command) {
-      throw new Error('Set sift.ai.command, or run "Sift: Choose AI…".');
+      throw new Error('Set sift.ai.command, or run "Sift: Choose AI".');
     }
     return new CommandProvider(settings.command);
   }
@@ -181,7 +181,7 @@ export async function chooseProvider(): Promise<boolean> {
 
   items.push({ label: 'Other', kind: vscode.QuickPickItemKind.Separator });
   items.push({
-    label: '$(gear) Custom command…',
+    label: '$(gear) Custom command',
     description: 'Any command line tool that reads a prompt on stdin and prints the answer',
     apply: async () => {
       const command = await vscode.window.showInputBox({
@@ -208,7 +208,7 @@ async function pickModel(preset: CliPreset, current: string): Promise<string | u
   const items: Item[] = [
     { label: 'Default model', description: `${preset.label}'s own choice`, model: '' },
     ...preset.models.map((m) => ({ label: m, model: m })),
-    { label: 'Other model…' },
+    { label: 'Other model' },
   ];
   const pick = await vscode.window.showQuickPick(items, { placeHolder: `Model for ${preset.label}${current ? ` (now: ${current})` : ''}` });
   if (!pick) {
@@ -379,7 +379,7 @@ async function languageModelProvider(id: string): Promise<AiProvider> {
   const model = models[0];
   if (!model) {
     throw new Error(
-      id ? `The language model "${id}" is not available. Run "Sift: Choose AI…".` : 'No VS Code language model is available. Run "Sift: Choose AI…".',
+      id ? `The language model "${id}" is not available. Run "Sift: Choose AI".` : 'No VS Code language model is available. Run "Sift: Choose AI".',
     );
   }
   return {

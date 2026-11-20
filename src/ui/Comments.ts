@@ -96,7 +96,7 @@ export class CommentsManager implements vscode.Disposable {
     this.controller = vscode.comments.createCommentController('sift', 'Sift');
     const submit = process.platform === 'darwin' ? '⌘Enter' : 'Ctrl+Enter';
     this.controller.options = {
-      prompt: 'Ask the AI about this line, or tell it what to change…',
+      prompt: 'Ask the AI about this line, or tell it what to change',
       placeHolder: `A question or a direction for the AI. Markdown works. ${submit} asks the AI.`,
     };
     this.controller.commentingRangeProvider = {

@@ -50,8 +50,19 @@ export const commands = {
   },
 };
 
-export const window: { activeTextEditor: { document: { uri: Uri } } | undefined } = {
+export class TabInputTextDiff {
+  constructor(
+    readonly original: Uri,
+    readonly modified: Uri,
+  ) {}
+}
+
+export const window: {
+  activeTextEditor: { document: { uri: Uri } } | undefined;
+  tabGroups: { activeTabGroup: { activeTab: { input: unknown } | undefined } };
+} = {
   activeTextEditor: undefined,
+  tabGroups: { activeTabGroup: { activeTab: undefined } },
 };
 
 export class ThemeColor {

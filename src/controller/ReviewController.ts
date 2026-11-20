@@ -2,11 +2,25 @@ import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
 import * as vscode from 'vscode';
-import { emptyOutcome, ReviewModel, subjectOf, type SyncOutcome } from '../core/ReviewModel';
+import { approvalKey, emptyOutcome, ReviewModel, subjectOf, type SyncOutcome } from '../core/ReviewModel';
 import { excludedEntries, ignorePaths, trackedPaths, unexcludePatterns, type ExcludeEntry, type IgnoreTarget } from '../git/ignore';
-import type { FileStatus, IterationAuthor, PlanInput, ReviewThread } from '../core/types';
+import type { FileRef, FileStatus, IterationAuthor, PlanCommit, PlanInput, ReviewFile, ReviewThread } from '../core/types';
 import type { GitRunner } from '../git/GitRunner';
-import { commitChanges, commitPaths, currentHead, fileDiff, hasStagedChanges, listChanges, operationInProgress } from '../git/changes';
+import {
+  amendInto,
+  branchStatus,
+  commitChanges,
+  commitEntries,
+  currentHead,
+  discardEntries,
+  fileDiff,
+  hasStagedChanges,
+  listChanges,
+  operationInProgress,
+  type BranchStatus,
+  type StageEntry,
+} from '../git/changes';
+import { applyHunks, fileHunks, headText, hunkSignature, type Hunk } from '../git/hunks';
 import {
   blobHashes,
   commitsAfter,
@@ -23,7 +37,7 @@ import {
 } from '../git/history';
 import { type SnapshotService, sessionRefPrefix, snapshotRef } from '../git/SnapshotService';
 import { excludeStateDir, StaleStateError, type StateStore } from '../state/StateStore';
-import { SCHEME, snapshotUri } from '../ui/SnapshotContentProvider';
+import { partQuery, parsePartQuery, SCHEME, snapshotUri } from '../ui/SnapshotContentProvider';
 
 export type DiffMode = 'round' | 'cumulative';
 
@@ -177,8 +191,15 @@ export class ReviewController implements vscode.Disposable {
     const changedPaths = new Set(changes.map((c) => c.path));
     const lastTouch = await lastTouches(this.git, model.state.session.baseCommit, model.pathsToTrace(changedPaths, inHistory));
     const blobs = await blobHashes(this.git, model.approvedPaths().filter((p) => changedPaths.has(p)));
+    const hunks = new Map<string, Hunk[]>();
+    for (const filePath of model.hunkPaths()) {
+      const change = changes.find((c) => c.path === filePath);
+      if (change && change.changeType === 'modified' && !change.binary) {
+        hunks.set(filePath, await fileHunks(this.git, filePath));
+      }
+    }
 
-    const outcome = model.sync({ changes, inHistory, lastTouch, blobs });
+    const outcome = model.sync({ changes, inHistory, lastTouch, blobs, hunks });
     for (const iteration of model.missingChanges()) {
       const previous = model.iterationsOf(iteration.commitId).filter((i) => i.n < iteration.n).at(-1);
       iteration.changed = previous ? await this.snapshots.changedPaths(previous.treeSha, iteration.treeSha) : [];
@@ -358,9 +379,68 @@ export class ReviewController implements vscode.Disposable {
     await this.persist();
   }
 
-  async moveFiles(paths: string[], commitId: string | null): Promise<void> {
-    this.require().moveFiles(paths, commitId);
+  /** A path moves the whole file; a reference with a commit moves the file's part in that commit. */
+  async moveFiles(refs: Array<string | FileRef>, commitId: string | null): Promise<void> {
+    this.require().moveFiles(refs, commitId);
+    await this.sync(this.require());
     await this.persist();
+  }
+
+  /** The file's blocks of changes against HEAD (empty for new, deleted and binary files). */
+  async hunksOf(filePath: string): Promise<Hunk[]> {
+    const file = this.model?.findFile(filePath);
+    if (!file || file.binary || file.changeType !== 'modified') {
+      return [];
+    }
+    return fileHunks(this.git, filePath);
+  }
+
+  /** The blocks of changes a file's entry (or part, for split files) holds. */
+  async ownHunks(file: ReviewFile): Promise<Hunk[]> {
+    const all = await this.hunksOf(file.path);
+    const own = new Set(this.require().ownKeys(file, all.map((h) => h.key)));
+    return all.filter((h) => own.has(h.key));
+  }
+
+  /** Moves some blocks of a file's changes to another commit, splitting the file across both. */
+  async moveHunks(filePath: string, from: string | null, keys: string[], to: string | null): Promise<void> {
+    const model = this.require();
+    model.moveHunks(filePath, from, keys, to, await fileHunks(this.git, filePath));
+    await this.sync(model);
+    await this.persist();
+  }
+
+  /**
+   * A file's text with or without the changes its part in `commitId` holds: with them (`own`) it is
+   * what committing the part puts in the commit; without them, the other side of the part's diff.
+   */
+  async partText(filePath: string, commitId: string | null, own: boolean): Promise<string> {
+    const model = this.require();
+    const file = model.findFile(filePath, commitId);
+    const base = (await headText(this.git, filePath)) ?? '';
+    if (!file) {
+      return base;
+    }
+    const all = await fileHunks(this.git, filePath);
+    const keys = new Set(model.ownKeys(file, all.map((h) => h.key)));
+    return applyHunks(
+      base,
+      all.filter((h) => keys.has(h.key) === own),
+    );
+  }
+
+  /** What committing (or amending) these entries stages: whole files, or the content of their part. */
+  private async stageEntriesOf(files: ReviewFile[]): Promise<StageEntry[]> {
+    const model = this.require();
+    const entries: StageEntry[] = [];
+    for (const file of files) {
+      entries.push(
+        model.isSplit(file.path)
+          ? { path: file.path, content: await this.partText(file.path, file.commitId, true) }
+          : { path: file.path },
+      );
+    }
+    return entries;
   }
 
   // ---- review loop ----
@@ -389,14 +469,21 @@ export class ReviewController implements vscode.Disposable {
     return n;
   }
 
-  async setStatus(paths: string[], status: FileStatus): Promise<void> {
-    // An approval covers the content as it is now; editing the file later takes it back.
+  async setStatus(refs: Array<string | FileRef>, status: FileStatus): Promise<void> {
+    // An approval covers the content as it is now; editing the file later takes it back. For a part
+    // of a split file, it covers the part's own changes.
     const model = this.require();
-    const blobs = status === 'done' ? await blobHashes(this.git, paths, true) : undefined;
-    if (blobs) {
-      await keepBlobs(this.git, model.state.session.id, blobs.values());
+    let approvals: Map<string, string> | undefined;
+    if (status === 'done') {
+      const files = refs.map((r) => model.resolve(r)).filter((f): f is ReviewFile => f !== undefined);
+      const whole = files.filter((f) => !model.isSplit(f.path)).map((f) => f.path);
+      approvals = await blobHashes(this.git, whole, true);
+      await keepBlobs(this.git, model.state.session.id, approvals.values());
+      for (const file of files.filter((f) => model.isSplit(f.path))) {
+        approvals.set(approvalKey(file), hunkSignature((await this.ownHunks(file)).map((h) => h.key)));
+      }
     }
-    model.setStatus(paths, status, blobs);
+    model.setStatus(refs, status, approvals);
     await this.persist();
   }
 
@@ -435,7 +522,8 @@ export class ReviewController implements vscode.Disposable {
     try {
       for (const id of ids) {
         const commit = model.getCommit(id);
-        const sha = await commitPaths(this.git, model.filesOf(id).map((f) => f.path), commit.message);
+        // Parts of split files are worked out against HEAD as it is now, after the commits before.
+        const sha = await commitEntries(this.git, await this.stageEntriesOf(model.filesOf(id)), commit.message);
         await setCommitRef(this.git, model.state.session.id, id, sha);
         model.markCommitted(id, sha);
         shas.push(sha);
@@ -526,6 +614,95 @@ export class ReviewController implements vscode.Disposable {
     await this.sync(model);
     await this.persist();
     return sha;
+  }
+
+  /**
+   * Throws away the uncommitted changes of these files: back to HEAD, new files deleted. For a part
+   * of a split file, only the part's own changes go.
+   */
+  async discard(refs: Array<string | FileRef>): Promise<void> {
+    const model = this.require();
+    const files = this.pendingFiles(refs);
+    if (files.length === 0) {
+      throw new Error('Nothing to discard: these files have no uncommitted changes.');
+    }
+    const entries: Array<{ path: string; changeType: ReviewFile['changeType']; content?: string }> = [];
+    for (const file of files) {
+      entries.push(
+        model.isSplit(file.path)
+          ? { path: file.path, changeType: file.changeType, content: await this.partText(file.path, file.commitId, false) }
+          : { path: file.path, changeType: file.changeType },
+      );
+    }
+    await discardEntries(this.git, entries);
+    await this.refresh();
+  }
+
+  /** Committed commits of this review that changes can still be amended into: made here, not pushed or reverted. */
+  amendTargets(): PlanCommit[] {
+    return this.require()
+      .commitsInOrder()
+      .filter((c) => c.status === 'committed' && c.sha && !c.pushed && !c.revertedBy);
+  }
+
+  /**
+   * Folds files (or parts of split files) into a commit already made and not pushed, rewriting it
+   * and the commits after it. Sift's records of those commits follow the rewrite.
+   */
+  async amend(refs: Array<string | FileRef>, targetId: string): Promise<string> {
+    const model = this.require();
+    const target = model.getCommit(targetId);
+    if (target.status !== 'committed' || !target.sha) {
+      throw new Error(`"${subjectOf(target)}" is not committed yet: move the files to it instead.`);
+    }
+    const operation = await operationInProgress(this.git);
+    if (operation) {
+      throw new Error(`Finish ${operation} first.`);
+    }
+    if (!(await inHeadHistory(this.git, target.sha))) {
+      throw new Error(`"${subjectOf(target)}" is not in the current branch's history.`);
+    }
+    if (await this.isPushed(target.sha)) {
+      throw new Error(`"${subjectOf(target)}" was pushed, so amending it would rewrite shared history. Commit the change on its own instead.`);
+    }
+    await this.sync(model);
+    const files = this.pendingFiles(refs);
+    if (files.length === 0) {
+      throw new Error('Nothing to amend: these files have no uncommitted changes.');
+    }
+    const rewritten = await amendInto(this.git, target.sha, await this.stageEntriesOf(files));
+    const sessionId = model.state.session.id;
+    for (const kind of ['commit', 'revert'] as const) {
+      for (const [commitId, sha] of await readCommitRefs(this.git, sessionId, kind)) {
+        const moved = rewritten.get(sha);
+        if (moved) {
+          await setCommitRef(this.git, sessionId, commitId, moved, kind);
+        }
+      }
+    }
+    model.absorb(files, targetId);
+    await this.sync(model);
+    await this.persist();
+    return model.getCommit(targetId).sha ?? '';
+  }
+
+  /** The branch, its upstream and how far apart they are. */
+  async branch(): Promise<BranchStatus> {
+    return branchStatus(this.git);
+  }
+
+  /** The pending entries the references stand for (whole files, or parts of split files). */
+  private pendingFiles(refs: Array<string | FileRef>): ReviewFile[] {
+    const model = this.require();
+    const files = new Set<ReviewFile>();
+    for (const ref of refs) {
+      const entries =
+        typeof ref === 'string' || ref.commitId === undefined
+          ? model.pendingEntries(typeof ref === 'string' ? ref : ref.path)
+          : [model.findFile(ref.path, ref.commitId)].filter((f): f is ReviewFile => f !== undefined && model.pendingEntries(f.path).includes(f));
+      entries.forEach((f) => files.add(f));
+    }
+    return [...files];
   }
 
   // ---- plan from the AI ----
@@ -636,11 +813,28 @@ export class ReviewController implements vscode.Disposable {
    * Opens the diff of a file: by the diff mode, or `compare.from` (a version or HEAD) against
    * `compare.to` (a version, or the working tree when left out).
    */
-  async openDiff(filePath: string, compare?: { from: number | 'HEAD'; to?: number }): Promise<void> {
+  async openDiff(filePath: string, compare?: { from: number | 'HEAD'; to?: number }, commitId?: string | null): Promise<void> {
     const model = this.require();
-    const file = model.findFile(filePath);
+    const file = model.findFile(filePath, commitId);
     if (!file) {
       throw new Error(`${filePath} is not part of this review.`);
+    }
+    if (!compare && model.isSplit(filePath) && model.pendingEntries(filePath).includes(file)) {
+      // A part of a split file: only its own changes, on the file as it is.
+      const all = await fileHunks(this.git, filePath);
+      const where = file.commitId ? `commit ${model.getCommit(file.commitId).order}` : 'unassigned';
+      const own = model.ownKeys(file, all.map((h) => h.key)).length;
+      await vscode.commands.executeCommand(
+        'vscode.diff',
+        snapshotUri(partQuery(file.commitId, hunkSignature(all.map((h) => h.key))), filePath),
+        this.fileUri(filePath),
+        `${path.basename(filePath)} (${own} of ${all.length} changes · ${where})`,
+        { preview: true },
+      );
+      if (model.markOpened(filePath, file.commitId)) {
+        await this.persist();
+      }
+      return;
     }
 
     const name = path.basename(filePath);
@@ -678,7 +872,7 @@ export class ReviewController implements vscode.Disposable {
     }
 
     await vscode.commands.executeCommand('vscode.diff', left, right, title, { preview: true });
-    if (model.markOpened(filePath)) {
+    if (model.markOpened(filePath, file.commitId)) {
       await this.persist();
     }
   }
@@ -691,6 +885,25 @@ export class ReviewController implements vscode.Disposable {
   activeFilePath(): string | null {
     const uri = vscode.window.activeTextEditor?.document.uri;
     return uri ? this.reviewPath(uri) : null;
+  }
+
+  /**
+   * The file in the active editor, with the commit of the part shown when it is a diff of a part of
+   * a split file.
+   */
+  activeFileRef(): FileRef | null {
+    const filePath = this.activeFilePath();
+    if (!filePath) {
+      return null;
+    }
+    const input = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
+    if (input instanceof vscode.TabInputTextDiff && input.original.scheme === SCHEME) {
+      const part = parsePartQuery(input.original.query);
+      if (part && input.original.path.replace(/^\//, '') === filePath) {
+        return { path: filePath, commitId: part.commitId };
+      }
+    }
+    return { path: filePath };
   }
 
   /** Repo-relative path of a working-tree or snapshot URI, when that file belongs to the review. */

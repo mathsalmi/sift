@@ -1,7 +1,7 @@
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import type { ReviewController } from '../controller/ReviewController';
-import type { FileStatus, PlanCommit, ReviewFile } from '../core/types';
+import type { FileRef, FileStatus, PlanCommit, ReviewFile } from '../core/types';
 import { changeUri } from './ChangeDecorations';
 import { fileTreeChildren } from './fileTree';
 import { COMMIT_STATUS_LABEL, commitIcon, fileCheckbox, fileDescription, fileIcon } from './icons';
@@ -97,7 +97,7 @@ export class PlanTree implements vscode.TreeDataProvider<PlanNode>, vscode.TreeD
   }
 
   /** The files a folder row stands for: the ones shown under it, with the view's filters. */
-  filesUnder(node: Extract<PlanNode, { kind: 'dir' }>): string[] {
+  filesUnder(node: Extract<PlanNode, { kind: 'dir' }>): FileRef[] {
     const model = this.controller.review;
     if (!model) {
       return [];
@@ -106,7 +106,7 @@ export class PlanTree implements vscode.TreeDataProvider<PlanNode>, vscode.TreeD
     return this.options
       .visible(model.filesOf(node.commitId), committed)
       .filter((f) => f.path.startsWith(node.dir) && (!node.status || f.status === node.status))
-      .map((f) => f.path);
+      .map((f) => ({ path: f.path, commitId: f.commitId }));
   }
 
   getParent(node: PlanNode): PlanNode | undefined {
@@ -122,7 +122,7 @@ export class PlanTree implements vscode.TreeDataProvider<PlanNode>, vscode.TreeD
     }
     let top: PlanNode = group;
     if (this.options.groupByStatus) {
-      const status = node.kind === 'dir' ? node.status : this.controller.review?.findFile(node.path)?.status;
+      const status = node.kind === 'dir' ? node.status : this.controller.review?.findFile(node.path, node.commitId)?.status;
       if (status) {
         top = { kind: 'status', status, commitId: node.commitId };
       }
@@ -199,8 +199,10 @@ export class PlanTree implements vscode.TreeDataProvider<PlanNode>, vscode.TreeD
   }
 
   handleDrag(source: readonly PlanNode[], data: vscode.DataTransfer): void {
-    const paths = source.filter((n) => n.kind === 'file').map((n) => (n as { path: string }).path);
-    data.set(MIME, new vscode.DataTransferItem(paths));
+    const refs: FileRef[] = source.flatMap((n) =>
+      n.kind === 'file' ? [{ path: n.path, commitId: n.commitId }] : n.kind === 'dir' ? this.filesUnder(n) : [],
+    );
+    data.set(MIME, new vscode.DataTransferItem(refs));
   }
 
   async handleDrop(target: PlanNode | undefined, data: vscode.DataTransfer): Promise<void> {
@@ -208,7 +210,7 @@ export class PlanTree implements vscode.TreeDataProvider<PlanNode>, vscode.TreeD
     if (!item || !target || target.kind === 'excluded' || target.kind === 'excluded-entry') {
       return;
     }
-    const paths = item.value as string[];
+    const refs = item.value as FileRef[];
     let commitId: string | null = null;
     if (target.kind === 'commit') {
       commitId = target.commitId;
@@ -217,7 +219,7 @@ export class PlanTree implements vscode.TreeDataProvider<PlanNode>, vscode.TreeD
       commitId = target.commitId;
     }
     try {
-      await this.controller.moveFiles(paths, commitId);
+      await this.controller.moveFiles(refs, commitId);
     } catch (error) {
       void vscode.window.showErrorMessage(String((error as Error).message));
     }
@@ -314,6 +316,10 @@ export class PlanTree implements vscode.TreeDataProvider<PlanNode>, vscode.TreeD
     item.description = fileDescription(file, !this.options.asTree, (n) => model?.fileVersionAt(file.commitId, file.path, n) ?? n);
     item.iconPath = fileIcon(file);
     item.tooltip = `${file.path}\n${file.changeType} · ${STATUS_TEXT[file.status]}`;
+    if (file.part) {
+      // Part of a file split across commits.
+      item.tooltip += `\nSplit across commits: ${file.part.own} of the file's ${file.part.total} changes are in this one`;
+    }
     item.resourceUri = changeUri(file);
     if (committed) {
       item.contextValue = 'file-committed';
@@ -326,7 +332,7 @@ export class PlanTree implements vscode.TreeDataProvider<PlanNode>, vscode.TreeD
       item.checkboxState = fileCheckbox(file);
       item.contextValue = `file-${file.status}`;
     }
-    item.command = { command: 'sift.openDiff', title: 'Open diff', arguments: [file.path] };
+    item.command = { command: 'sift.openDiff', title: 'Open diff', arguments: [file.path, file.commitId] };
     return item;
   }
 }

@@ -5,11 +5,13 @@ import { chooseProvider, providerLabel, providerShortLabel, resolveProvider } fr
 import { migrateAiSettings } from './ai/settings';
 import { registerAgentTools } from './ai/agentTools';
 import { ReviewController } from './controller/ReviewController';
-import type { FileStatus, PlanCommit } from './core/types';
+import type { FileRef, FileStatus, PlanCommit } from './core/types';
 import { GitRunner } from './git/GitRunner';
 import { SnapshotService } from './git/SnapshotService';
 import { StateStore } from './state/StateStore';
 import { ignoreFile, type IgnoreTarget } from './git/ignore';
+import { hunkLabel, hunkTouches, type Hunk } from './git/hunks';
+import { gitRepository } from './git/vscodeGit';
 import { ChangeDecorations } from './ui/ChangeDecorations';
 import { CommentsManager, type ThreadComment } from './ui/Comments';
 import { PlanTree, type PlanNode } from './ui/PlanTree';
@@ -88,16 +90,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   // The checkbox in front of a file approves it (checked) or takes the approval back (unchecked).
   const onCheckbox = (event: vscode.TreeCheckboxChangeEvent<TreeNode>) => {
-    const approve: string[] = [];
-    const unapprove: string[] = [];
+    const approve: FileRef[] = [];
+    const unapprove: FileRef[] = [];
     for (const [node, state] of event.items) {
       if (node.kind === 'file') {
-        (state === vscode.TreeItemCheckboxState.Checked ? approve : unapprove).push(node.path);
+        (state === vscode.TreeItemCheckboxState.Checked ? approve : unapprove).push({ path: node.path, commitId: node.commitId });
       }
     }
     void (async () => {
       if (approve.length > 0) {
-        if (await confirmUnresolved(approve, 'Approve')) {
+        if (await confirmUnresolved(approve.map((r) => r.path), 'Approve')) {
           await controller.setStatus(approve, 'done');
         } else {
           await controller.notify(); // puts the checkbox back
@@ -165,7 +167,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     planView.onDidChangeCheckboxState(onCheckbox),
     comments,
     statusBar,
-    vscode.workspace.registerTextDocumentContentProvider(SCHEME, new SnapshotContentProvider(snapshots)),
+    vscode.workspace.registerTextDocumentContentProvider(
+      SCHEME,
+      new SnapshotContentProvider(snapshots, (filePath, commitId) => controller.partText(filePath, commitId, false)),
+    ),
   );
 
   const register = (id: string, handler: (...args: never[]) => unknown) => {
@@ -252,14 +257,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }
   });
 
-  register('sift.moveToCommit', async (node?: TreeNode | vscode.Uri, selected?: TreeNode[]) => {
+  /**
+   * Asks which commit to move something to: another planned commit, Unassigned, or a new commit
+   * (named right away). Returns undefined when cancelled.
+   */
+  const pickTargetCommit = async (from: Set<string | null>, what: string): Promise<string | null | undefined> => {
     const model = controller.review;
-    const paths = actionPaths(node, selected);
-    if (!model || paths.length === 0) {
-      return;
+    if (!model) {
+      return undefined;
     }
     // The commit the files are in already, when they are all in the same one, isn't offered.
-    const from = new Set(paths.map((p) => model.findFile(p)?.commitId ?? null));
     const same = from.size === 1 ? [...from][0] : undefined;
     type Pick = vscode.QuickPickItem & { commitId?: string | null };
     const picks: Pick[] = [
@@ -268,23 +275,32 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         .filter((c) => c.status !== 'committed' && c.id !== same)
         .map((c) => ({ label: `${c.order}. ${c.message.split('\n')[0]}`, commitId: c.id as string | null })),
       ...(same === null ? [] : [{ label: '$(inbox) Unassigned', commitId: null }]),
-      { label: '$(add) New commit…' },
+      { label: '$(add) New commit' },
     ];
-    const what = paths.length === 1 ? path.posix.basename(paths[0]) : `${paths.length} files`;
     // With no other commit to pick, go straight to naming a new one.
-    const pick = picks.length === 1 ? picks[0] : await vscode.window.showQuickPick(picks, { placeHolder: `Move ${what} to…` });
+    const pick = picks.length === 1 ? picks[0] : await vscode.window.showQuickPick(picks, { placeHolder: `Commit to move ${what} to` });
     if (!pick) {
+      return undefined;
+    }
+    if (pick.commitId !== undefined) {
+      return pick.commitId;
+    }
+    const message = await vscode.window.showInputBox({ prompt: `Message of the new commit for ${what}`, ignoreFocusOut: true });
+    return message?.trim() ? controller.newCommit(message) : undefined;
+  };
+
+  register('sift.moveToCommit', async (node?: TreeNode | vscode.Uri, selected?: TreeNode[]) => {
+    const model = controller.review;
+    const refs = actionRefs(node, selected);
+    if (!model || refs.length === 0) {
       return;
     }
-    let commitId = pick.commitId;
-    if (commitId === undefined) {
-      const message = await vscode.window.showInputBox({ prompt: `Message of the new commit for ${what}`, ignoreFocusOut: true });
-      if (!message?.trim()) {
-        return;
-      }
-      commitId = await controller.newCommit(message);
+    const from = new Set(refs.map((r) => model.resolve(r)?.commitId ?? null));
+    const what = refs.length === 1 ? path.posix.basename(refs[0].path) : `${refs.length} files`;
+    const commitId = await pickTargetCommit(from, what);
+    if (commitId !== undefined) {
+      await controller.moveFiles(refs, commitId);
     }
-    await controller.moveFiles(paths, commitId);
   });
 
   // ---- review loop ----
@@ -309,12 +325,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     await openNextTodo(controller);
   });
 
-  register('sift.openDiff', async (filePath: string) => {
+  register('sift.openDiff', async (filePath: string, inCommit?: string | null) => {
     // Opening a file of another planned commit puts that commit in review.
     // The diff opens first: starting a commit takes a snapshot, which can take a moment on big trees.
     const model = controller.review;
-    const commitId = model?.findFile(filePath)?.commitId;
-    await controller.openDiff(filePath);
+    const commitId = model?.findFile(filePath, inCommit)?.commitId;
+    await controller.openDiff(filePath, undefined, inCommit);
     if (model && commitId && model.state.session.currentCommitId !== commitId && model.getCommit(commitId).status !== 'committed') {
       await controller.startCommit(commitId);
     }
@@ -323,9 +339,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const setDiffMode = async (mode: 'round' | 'cumulative') => {
     controller.diffMode = mode;
     await vscode.commands.executeCommand('setContext', 'sift.diffMode', mode);
-    const active = controller.activeFilePath();
+    const active = controller.activeFileRef();
     if (active) {
-      await controller.openDiff(active);
+      await controller.openDiff(active.path, undefined, active.commitId);
     }
     await controller.notify();
   };
@@ -338,12 +354,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   register('sift.compareVersions', async () => {
     const model = controller.review;
-    const filePath = controller.activeFilePath();
-    if (!model || !filePath) {
+    const active = controller.activeFileRef();
+    if (!model || !active) {
       void vscode.window.showInformationMessage('Open a file of the review first.');
       return;
     }
-    const commitId = model.findFile(filePath)?.commitId ?? null;
+    const filePath = active.path;
+    const commitId = model.resolve(active)?.commitId ?? null;
     // Only the file's own versions: snapshots that didn't change it hold the same content.
     const picks: Array<vscode.QuickPickItem & { from: number | 'HEAD' }> = [
       { label: 'HEAD', description: 'last commit', from: 'HEAD' },
@@ -356,47 +373,51 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         }))
         .reverse(),
     ];
-    const pick = await vscode.window.showQuickPick(picks, { placeHolder: `Compare ${path.posix.basename(filePath)} now with…` });
+    const pick = await vscode.window.showQuickPick(picks, { placeHolder: `Version to compare ${path.posix.basename(filePath)} with` });
     if (pick) {
-      await controller.openDiff(filePath, { from: pick.from });
+      await controller.openDiff(filePath, { from: pick.from }, commitId);
     }
   });
 
-  /** Files a file action applies to: the clicked tab, the selected tree rows, or the active editor. */
-  const actionPaths = (node?: TreeNode | vscode.Uri, selected?: TreeNode[]): string[] => {
+  /**
+   * Files a file action applies to: the clicked tab, the selected tree rows, or the active editor.
+   * Rows and diffs of a part of a split file stand for that part.
+   */
+  const actionRefs = (node?: TreeNode | vscode.Uri, selected?: TreeNode[]): FileRef[] => {
     if (node instanceof vscode.Uri) {
       // From an editor tab's context menu the argument is the tab's file.
       const tabPath = controller.reviewPath(node);
-      return tabPath ? [tabPath] : [];
+      const active = controller.activeFileRef();
+      return tabPath ? [active?.path === tabPath ? active : { path: tabPath }] : [];
     }
-    return selectedPaths(controller, planTree, node, selected);
+    return selectedRefs(controller, planTree, node, selected);
   };
 
   const setStatus = (status: FileStatus) => async (node?: TreeNode | vscode.Uri, selected?: TreeNode[]) => {
     const fromTab = node instanceof vscode.Uri;
-    const all = actionPaths(node, selected);
+    const all = actionRefs(node, selected);
     if (all.length === 0) {
       void vscode.window.showInformationMessage('Select a file in the tree or open one in the diff editor.');
       return;
     }
     // Files are reviewed as part of a commit: unassigned ones need a commit first.
-    const paths = all.filter((p) => controller.review?.findFile(p)?.commitId);
-    if (paths.length === 0) {
+    const refs = all.filter((r) => controller.review?.resolve(r)?.commitId);
+    if (refs.length === 0) {
       const choice = await vscode.window.showInformationMessage(
-        `${all.length === 1 ? path.posix.basename(all[0]) + ' is' : 'These files are'} not in a commit yet. Move ${all.length === 1 ? 'it' : 'them'} to a commit to review ${all.length === 1 ? 'it' : 'them'}.`,
-        'Move to commit…',
+        `${all.length === 1 ? path.posix.basename(all[0].path) + ' is' : 'These files are'} not in a commit yet. Move ${all.length === 1 ? 'it' : 'them'} to a commit to review ${all.length === 1 ? 'it' : 'them'}.`,
+        'Move to commit',
       );
       if (choice) {
-        await vscode.commands.executeCommand('sift.moveToCommit', fromTab ? node : undefined, fromTab ? undefined : all.map((p) => ({ kind: 'file', path: p, commitId: null })));
+        await vscode.commands.executeCommand('sift.moveToCommit', fromTab ? node : undefined, fromTab ? undefined : all.map((r) => ({ kind: 'file', path: r.path, commitId: null })));
       }
       return;
     }
-    if (status === 'done' && !(await confirmUnresolved(paths, 'Approve'))) {
+    if (status === 'done' && !(await confirmUnresolved(refs.map((r) => r.path), 'Approve'))) {
       return;
     }
-    await controller.setStatus(paths, status);
+    await controller.setStatus(refs, status);
     if (status === 'done' && !node && !fromTab) {
-      await openNextTodo(controller, paths[0]);
+      await openNextTodo(controller, refs[0].path);
     }
   };
   register('sift.markDone', setStatus('done'));
@@ -405,7 +426,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   register('sift.markTodo', setStatus('todo'));
 
   const ignore = (target: IgnoreTarget) => async (node?: TreeNode | vscode.Uri, selected?: TreeNode[]) => {
-    const paths = actionPaths(node, selected);
+    const paths = [...new Set(actionRefs(node, selected).map((r) => r.path))];
     // A folder gets one rule for the whole folder, so files added to it later stay hidden too.
     const rows = node instanceof vscode.Uri ? [] : selected && selected.length > 0 ? selected : node ? [node] : [];
     const dirs = rows.flatMap((n) => (n.kind === 'dir' ? [n.dir] : []));
@@ -468,8 +489,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   });
 
   register('sift.revealFile', async (uri?: vscode.Uri) => {
-    const filePath = uri instanceof vscode.Uri ? controller.reviewPath(uri) : controller.activeFilePath();
-    const file = filePath ? controller.review?.findFile(filePath) : undefined;
+    const ref = uri instanceof vscode.Uri ? actionRefs(uri)[0] : controller.activeFileRef();
+    const file = ref ? controller.review?.resolve(ref) : undefined;
     if (!file) {
       void vscode.window.showInformationMessage(`${uri instanceof vscode.Uri ? path.basename(uri.fsPath) : 'This file'} is not in the review: it has no uncommitted changes.`);
       return;
@@ -508,19 +529,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   const openAdjacent = (delta: -1 | 1) => async () => {
     const model = controller.review;
-    const current = controller.activeFilePath();
+    const current = controller.activeFileRef();
     if (!model || !current) {
       void vscode.window.showInformationMessage('Open a file of the review first.');
       return;
     }
-    const next = model.adjacentFile(current, delta);
+    const next = model.adjacentFile(current.path, delta, current.commitId);
     if (!next) {
       void vscode.window.showInformationMessage(
         delta > 0 ? 'This is the last file of the commit.' : 'This is the first file of the commit.',
       );
       return;
     }
-    await controller.openDiff(next.path);
+    await controller.openDiff(next.path, undefined, next.commitId);
   };
   register('sift.previousFile', openAdjacent(-1));
   register('sift.nextFile', openAdjacent(1));
@@ -589,11 +610,46 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     return result.shas.length;
   };
 
-  /** Pushes with VS Code's Git, which handles sign-in and publishing a new branch. */
+  /** Pulls with VS Code's Git (its sign-in, and your pull settings), then catches up with what came in. */
+  const pull = async () => {
+    const repository = await gitRepository(root);
+    if (repository) {
+      await repository.pull();
+    } else {
+      await vscode.commands.executeCommand('git.pull');
+    }
+    await syncWithGit();
+    await updateBranch();
+  };
+
+  /**
+   * Pushes with VS Code's Git, which handles sign-in and publishing a new branch. Fetches first: when
+   * the remote branch has commits this one doesn't, offers to pull them, since the push would be refused.
+   */
   const push = async () => {
+    const repository = await gitRepository(root);
+    await repository?.fetch().catch(() => undefined);
+    let status = await controller.branch();
+    if (status.behind > 0) {
+      const choice = await vscode.window.showWarningMessage(
+        `${status.upstream} has ${status.behind} commit(s) this branch doesn't have. Pull them before pushing?`,
+        { modal: true, detail: 'Git refuses to push a branch that is behind its remote branch.' },
+        'Pull and push',
+      );
+      if (choice !== 'Pull and push') {
+        return;
+      }
+      await pull();
+      status = await controller.branch();
+      if (status.behind > 0) {
+        return;
+      }
+    }
     await vscode.commands.executeCommand('git.push');
     await updateShipContext();
+    await updateBranch();
   };
+  register('sift.pull', pull);
 
   register('sift.commitApproved', async () => {
     await commitPlanned();
@@ -728,6 +784,174 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }
     const sha = await controller.revertCommit(commitId);
     void vscode.window.setStatusBarMessage(`$(discard) Reverted with ${sha.slice(0, 7)}`, 5000);
+  });
+
+  // ---- changes: discard, split across commits, amend ----
+
+  register('sift.discardChanges', async (node?: TreeNode | vscode.Uri, selected?: TreeNode[]) => {
+    const model = controller.review;
+    const refs = actionRefs(node, selected);
+    if (!model || refs.length === 0) {
+      void vscode.window.showInformationMessage('Select a file in the tree or open one in the diff editor.');
+      return;
+    }
+    const parts = refs.filter((r) => r.commitId !== undefined && model.isSplit(r.path));
+    const what = refs.length === 1 ? path.posix.basename(refs[0].path) : `${refs.length} files`;
+    const choice = await vscode.window.showWarningMessage(
+      `Discard the changes to ${what}?`,
+      {
+        modal: true,
+        detail: [
+          "They are gone for good: this can't be undone. New files are deleted.",
+          ...(parts.length > 0 ? ["For a file split across commits, only the changes in the selected commit's part go."] : []),
+        ].join('\n\n'),
+      },
+      'Discard changes',
+    );
+    if (choice !== 'Discard changes') {
+      return;
+    }
+    await controller.discard(refs);
+    await comments.rerender();
+    void vscode.window.setStatusBarMessage(`$(discard) Discarded the changes to ${what}`, 5000);
+  });
+
+  /** Moves the chosen blocks of a file's changes to another commit, asking which one. */
+  const moveChanges = async (ref: FileRef, hunks: Hunk[]) => {
+    const file = controller.review?.resolve(ref);
+    if (!file || hunks.length === 0) {
+      return;
+    }
+    const what = hunks.length === 1 ? `1 change of ${path.posix.basename(file.path)}` : `${hunks.length} changes of ${path.posix.basename(file.path)}`;
+    const commitId = await pickTargetCommit(new Set([file.commitId]), what);
+    if (commitId === undefined) {
+      return;
+    }
+    await controller.moveHunks(file.path, file.commitId, hunks.map((h) => h.key), commitId);
+    void vscode.window.setStatusBarMessage(`$(split-horizontal) Moved ${what}`, 5000);
+  };
+
+  /** The blocks of changes of a file (or of its part) that can be split off, or a message why there are none. */
+  const splittable = async (ref: FileRef): Promise<Hunk[] | null> => {
+    const file = controller.review?.resolve(ref);
+    if (!file) {
+      return null;
+    }
+    if (file.binary || file.changeType !== 'modified') {
+      void vscode.window.showInformationMessage(
+        `Only changes to an existing text file can be split; ${path.posix.basename(file.path)} is ${file.binary ? 'binary' : file.changeType === 'added' ? 'new' : 'deleted'}.`,
+      );
+      return null;
+    }
+    return controller.ownHunks(file);
+  };
+
+  register('sift.splitFile', async (node?: TreeNode | vscode.Uri, selected?: TreeNode[]) => {
+    const [ref] = actionRefs(node, selected);
+    const hunks = ref ? await splittable(ref) : null;
+    if (!ref || !hunks) {
+      if (!ref) {
+        void vscode.window.showInformationMessage('Select a file in the tree or open one in the diff editor.');
+      }
+      return;
+    }
+    if (hunks.length < 2) {
+      void vscode.window.showInformationMessage(
+        `${path.posix.basename(ref.path)} has one change here: move it with "Move to commit" instead.`,
+      );
+      return;
+    }
+    const picked = await vscode.window.showQuickPick(
+      hunks.map((hunk) => ({
+        label: hunkLabel(hunk),
+        description: (hunk.added.find((l) => l.trim()) ?? hunk.removed.find((l) => l.trim()) ?? '').trim().slice(0, 80),
+        detail: `+${hunk.added.length} -${hunk.removed.length}`,
+        hunk,
+      })),
+      { canPickMany: true, placeHolder: `Changes of ${path.posix.basename(ref.path)} to move to another commit` },
+    );
+    if (picked && picked.length > 0) {
+      await moveChanges(ref, picked.map((p) => p.hunk));
+    }
+  });
+
+  register('sift.moveChangeToCommit', async () => {
+    const editor = vscode.window.activeTextEditor;
+    const ref = controller.activeFileRef();
+    if (!editor || !ref) {
+      void vscode.window.showInformationMessage('Put the cursor on a change in the diff of a review file.');
+      return;
+    }
+    if (editor.document.uri.scheme !== 'file') {
+      void vscode.window.showInformationMessage('Put the cursor on the change in the right side of the diff (the file as it is now).');
+      return;
+    }
+    const hunks = await splittable(ref);
+    if (!hunks) {
+      return;
+    }
+    const touched = hunks.filter((hunk) => editor.selections.some((sel) => hunkTouches(hunk, sel.start.line + 1, sel.end.line + 1)));
+    if (touched.length === 0) {
+      void vscode.window.showInformationMessage(
+        "The cursor isn't on a change of this file here. Select the changed lines to move, or use \"Split changes across commits\".",
+      );
+      return;
+    }
+    await moveChanges(ref, touched);
+  });
+
+  register('sift.amendInto', async (node?: TreeNode | vscode.Uri, selected?: TreeNode[]) => {
+    const model = controller.review;
+    if (!model) {
+      return;
+    }
+    // On a planned commit: all of its files.
+    const plannedId = !(node instanceof vscode.Uri) ? commitIdOf(node) : undefined;
+    const refs: FileRef[] = plannedId
+      ? model.filesOf(plannedId).map((f) => ({ path: f.path, commitId: plannedId }))
+      : actionRefs(node, selected);
+    if (refs.length === 0) {
+      void vscode.window.showInformationMessage('Select files in the tree or open one in the diff editor.');
+      return;
+    }
+    const targets = controller.amendTargets();
+    if (targets.length === 0) {
+      void vscode.window.showInformationMessage('No commit can take the change: amending works on commits made in this review that are not pushed yet.');
+      return;
+    }
+    const what = plannedId
+      ? `"${model.getCommit(plannedId).message.split('\n')[0]}"`
+      : refs.length === 1
+        ? path.posix.basename(refs[0].path)
+        : `${refs.length} files`;
+    const pick = await vscode.window.showQuickPick(
+      [...targets].reverse().map((c) => ({ label: label(c), description: c.sha?.slice(0, 7), commitId: c.id })),
+      { placeHolder: `Commit to amend ${what} into` },
+    );
+    if (!pick) {
+      return;
+    }
+    const target = model.getCommit(pick.commitId);
+    const later = await controller.commitsUndoneWith(pick.commitId);
+    if (later.length > 0) {
+      const choice = await vscode.window.showWarningMessage(
+        `Amend ${what} into "${target.message.split('\n')[0]}"?`,
+        {
+          modal: true,
+          detail: `The ${later.length} commit(s) made after it are rewritten too (same changes, new ids):\n${later.map((c) => `${c.sha.slice(0, 7)} ${c.subject}`).join('\n')}`,
+        },
+        'Amend',
+      );
+      if (choice !== 'Amend') {
+        return;
+      }
+    }
+    const sha = await controller.amend(refs, pick.commitId);
+    if (plannedId && model.state.commits.some((c) => c.id === plannedId) && model.filesOf(plannedId).length === 0) {
+      await controller.deleteCommit(plannedId);
+    }
+    await comments.rerender();
+    void vscode.window.setStatusBarMessage(`$(git-commit) Amended into ${sha.slice(0, 7)}`, 5000);
   });
 
   register('sift.collapseAll', () => viewOptions.setCollapsed(true));
@@ -974,9 +1198,29 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   void updateShipContext();
   context.subscriptions.push(controller.onDidChange(() => void updateShipContext()));
 
+  /** The branch and how it stands against its remote branch, next to the view's title. */
+  const updateBranch = async () => {
+    const status = await controller.branch().catch(() => null);
+    void vscode.commands.executeCommand('setContext', 'sift.behind', (status?.behind ?? 0) > 0);
+    if (!status) {
+      planView.description = undefined;
+      return;
+    }
+    const name = status.branch ?? 'detached HEAD';
+    if (!status.branch) {
+      planView.description = name;
+    } else if (!status.upstream) {
+      planView.description = `${name} · not published`;
+    } else {
+      const counts = [status.ahead > 0 ? `↑${status.ahead}` : '', status.behind > 0 ? `↓${status.behind}` : ''].filter(Boolean);
+      planView.description = counts.length > 0 ? `${name} ${counts.join(' ')}` : name;
+    }
+  };
+  void updateBranch();
+
   const updateActiveFileContext = () => {
-    const filePath = controller.activeFilePath();
-    const file = filePath ? controller.review?.findFile(filePath) : undefined;
+    const ref = controller.activeFileRef();
+    const file = ref ? controller.review?.resolve(ref) : undefined;
     void vscode.commands.executeCommand('setContext', 'sift.activeFileApproved', file?.status === 'done');
     void vscode.commands.executeCommand('setContext', 'sift.activeFileAssigned', Boolean(file?.commitId));
     // Sift's diff menu shows only on Sift's own files, not on every diff editor.
@@ -984,6 +1228,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   };
   context.subscriptions.push(
     vscode.window.onDidChangeActiveTextEditor(updateActiveFileContext),
+    vscode.window.tabGroups.onDidChangeTabs(updateActiveFileContext),
     controller.onDidChange(updateActiveFileContext),
   );
 
@@ -1068,6 +1313,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const onHeadChange = () => {
     scheduleSync();
     void updateShipContext();
+    void updateBranch();
   };
   // Edits to .git/info/exclude (by Sift or by hand) update the "Locally excluded" group.
   const excludePath = await ignoreFile(git, 'exclude');
@@ -1129,16 +1375,16 @@ function commitIdOf(node?: PlanNode): string | undefined {
   return undefined;
 }
 
-/** Paths from a tree selection, or the file in the active editor. */
-function selectedPaths(controller: ReviewController, planTree: PlanTree, node?: TreeNode, selected?: TreeNode[]): string[] {
+/** Files (or parts of split files) from a tree selection, or the file in the active editor. */
+function selectedRefs(controller: ReviewController, planTree: PlanTree, node?: TreeNode, selected?: TreeNode[]): FileRef[] {
   const nodes = selected && selected.length > 0 ? selected : node ? [node] : [];
-  const paths = [
-    ...new Set(nodes.flatMap((n) => (n.kind === 'file' ? [n.path] : n.kind === 'dir' ? planTree.filesUnder(n) : []))),
-  ];
-  if (paths.length > 0 || nodes.some((n) => n.kind === 'dir')) {
-    return paths;
+  const refs = nodes.flatMap((n): FileRef[] =>
+    n.kind === 'file' ? [{ path: n.path, commitId: n.commitId }] : n.kind === 'dir' ? planTree.filesUnder(n) : [],
+  );
+  if (refs.length > 0 || nodes.some((n) => n.kind === 'dir')) {
+    return refs;
   }
-  const active = controller.activeFilePath();
+  const active = controller.activeFileRef();
   return active ? [active] : [];
 }
 
@@ -1154,7 +1400,7 @@ async function openNextTodo(controller: ReviewController, afterPath?: string, ot
   }
   const next = commitId ? model.nextTodo(commitId, afterPath) : null;
   if (next) {
-    await controller.openDiff(next.path);
+    await controller.openDiff(next.path, undefined, next.commitId);
     return;
   }
   const elsewhere = otherCommits ? model.nextTodoInOtherCommit(commitId) : null;
@@ -1164,7 +1410,7 @@ async function openNextTodo(controller: ReviewController, afterPath?: string, ot
     );
     return;
   }
-  await controller.openDiff(elsewhere.path);
+  await controller.openDiff(elsewhere.path, undefined, elsewhere.commitId);
   await controller.startCommit(elsewhere.commitId);
   if (commitId) {
     // The commit left behind is approved but not committed yet: say so, so it isn't forgotten.

@@ -26,7 +26,11 @@ When an AI (or you) changes hundreds of files in one go, reviewing a single gian
 - **Hide committed commits:** in the view title's **…** menu, separate from approved files. Committed commits are shown by default, marked **Committed** (not pushed yet), **Pushed** or **Reverted**.
 - **Filter files:** the filter button in the view title narrows the plan to files whose path fuzzy-matches what you type (`ctrl rev` finds `src/controller/ReviewController.ts`). Escape puts the previous filter back; the ✕ button clears it.
 - **Commit everything approved:** the ✓ button in the view title commits every approved commit, in plan order, without asking. It asks only when it would commit files you haven't approved: when nothing is approved yet it offers the commit in review. **Commit and push** is in the **…** menu, and **Push** appears once commits wait to be pushed.
-- **Dependencies:** a commit can build on earlier ones (**Set the commits it builds on…** on a commit, or `dependsOn` from the AI). Sift then never moves it above them or commits it before them; committing it commits them first. Independent approved commits can be committed ahead of unapproved ones.
+- **Dependencies:** a commit can build on earlier ones (**Set the commits it builds on** on a commit, or `dependsOn` from the AI). Sift then never moves it above them or commits it before them; committing it commits them first. Independent approved commits can be committed ahead of unapproved ones.
+- **Split a file across commits:** one file's changes can go to different commits. In the diff, select the changed lines and right-click **Move selected changes to commit**, or use **Split changes across commits** (file right-click, or the Sift menu in the diff) to pick changes from a list. The file then shows in each commit with "2 of 5 changes"; each part has its own diff (only its changes), approval and review status, and committing a commit commits only its part. A part whose change you edit keeps it; moving a part onto the commit of another part joins them, and a plan places whole files again.
+- **Discard changes:** right-click a file, folder or the Sift menu in the diff for **Discard changes**: the file goes back to HEAD (a new file is deleted); for a part of a split file, only that part's changes go. Asks first; it can't be undone.
+- **Amend into a commit:** **Amend into commit** on a file, folder or planned commit folds its changes into a commit already made in this review and not pushed yet. Amending an older commit rewrites the ones after it (Sift says which first); if the change conflicts with them, nothing changes.
+- **Branch and sync:** the Sift view's title shows the branch and how it stands against its remote branch (`main ↑2 ↓1`, or "not published"). **Pull** appears when the remote branch has new commits. **Push** fetches first and, when the remote branch moved on, offers to pull before pushing instead of failing. Fetch, pull and push go through VS Code's Git, with its sign-in and your pull settings.
 - **Undo or revert:** a committed commit not pushed yet has **Undo commit**: its changes (and those of any commit made after it) go back to the working tree and the plan, approvals kept. A pushed commit has **Revert commit**, which makes a new commit that undoes it.
 - **Review status:** files are reviewed as part of a commit: unassigned ones have no checkbox until you move them into one. Tick a file's checkbox to approve it. Sift asks first when the file still has unresolved comments. A commit is **To do** until one file is approved, **In progress** while some are, and **Approved** when all are. Files that change after you approved them go back to In progress.
 - **You stay in control:** the AI never stages or commits. Only your Approve click commits, with your git identity and hooks.
@@ -72,7 +76,7 @@ Safety tip: create a backup branch before a big review: `git branch backup/$(dat
 
 ## Choosing the AI
 
-Click the AI's name in the status bar (next to Sift's review progress), or run **Sift: Choose AI…**. It lists what is available here and saves your choice in your user settings:
+Click the AI's name in the status bar (next to Sift's review progress), or run **Sift: Choose AI**. It lists what is available here and saves your choice in your user settings:
 
 | Provider | How Sift calls it |
 | --- | --- |
@@ -82,7 +86,7 @@ Click the AI's name in the status bar (next to Sift's review progress), or run *
 | **VS Code model** | Any model available in VS Code, e.g. from GitHub Copilot. Sift gives it read-only tools (read a file, search, list files, all inside the repo) so it can look around like the command line AIs. VS Code asks you once to allow Sift to use the model. |
 | **Custom command** | Any command, run in your login shell at the repo root. It gets the prompt on stdin and must print an answer containing the JSON. |
 
-For the command line AIs, Choose AI… shows which ones it found and then asks for the model (or the tool's default). They use your own login and subscription.
+For the command line AIs, Choose AI shows which ones it found and then asks for the model (or the tool's default). They use your own login and subscription.
 
 ## Chat agents (Copilot agent mode)
 
@@ -136,17 +140,17 @@ To change the plan from outside Sift (an agent, a script), write `.sift/plan.jso
 | Send a comment (Ask AI) | Cmd+Enter | Ctrl+Enter |
 | Open the Sift view (also when the sidebar is hidden) | Ctrl+Shift+S | Ctrl+Alt+S |
 
-In the diff editor, Sift's actions are all under one **Sift** button (the Sift icon) in the editor toolbar, shown only on files in the review: Approve / unapprove file · Next to do · Previous / next file in the commit · Compare with (previous version, last commit, or a specific version) · Ask AI about all open comments · Show / hide AI explanations.
+In the diff editor, Sift's actions are all under one **Sift** button (the Sift icon) in the editor toolbar, shown only on files in the review: Approve / unapprove file · Next to do · Previous / next file in the commit · Compare with (previous version, last commit, or a specific version) · Ask AI about all open comments · Show / hide AI explanations · Move selected changes to commit · Split changes across commits · Move to commit · Amend into commit · Discard changes.
 
-Right-click a commit for: Approve and commit · Review this commit · Edit message · Move up / down · Delete. Right-click a file for: Approve / unapprove · Mark in progress / to do · Add to .gitignore · Exclude locally (.git/info/exclude) · Move to commit… (lists the other commits, Unassigned and **New commit…**; with no other commit it goes straight to naming a new one). Right-click a folder for the same on every file under it (Add to .gitignore and Exclude locally add one rule for the whole folder, so files added to it later stay hidden too). Right-click a locally excluded file or folder for: Remove from .git/info/exclude. Right-click an editor tab of a review file for **Sift**: Show in Sift sidebar · Approve / unapprove · Mark in progress · Mark to do · Add to .gitignore · Exclude locally · Move to commit….
+Right-click a commit for: Approve and commit · Review this commit · Edit message · Move up / down · Amend into commit · Delete. Right-click a file for: Approve / unapprove · Mark in progress / to do · Add to .gitignore · Exclude locally (.git/info/exclude) · Move to commit (lists the other commits, Unassigned and **New commit**; with no other commit it goes straight to naming a new one) · Split changes across commits · Amend into commit · Discard changes. Right-click a folder for the same on every file under it (Add to .gitignore and Exclude locally add one rule for the whole folder, so files added to it later stay hidden too). Right-click a locally excluded file or folder for: Remove from .git/info/exclude. Right-click an editor tab of a review file for **Sift**: Show in Sift sidebar · Approve / unapprove · Mark in progress · Mark to do · Add to .gitignore · Exclude locally · Move to commit · Split changes across commits · Amend into commit · Discard changes.
 
-Also in the Sift view and command palette: Plan commits with AI · Choose AI… · Plan commits manually · New commit · Commit approved commits (and push) · Push · Refresh (re-reads git and the saved state) · Group / stop grouping files by status · Hide / show approved files · Remove from .git/info/exclude · View as tree / list · Collapse / expand all · Discard plan.
+Also in the Sift view and command palette: Plan commits with AI · Choose AI · Plan commits manually · New commit · Commit approved commits (and push) · Push · Refresh (re-reads git and the saved state) · Group / stop grouping files by status · Hide / show approved files · Remove from .git/info/exclude · View as tree / list · Collapse / expand all · Discard plan.
 
 ## Settings
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| `sift.ai.provider` | `claude` | `claude`, `codex`, `gemini`, `vscode` or `custom`. Easiest to set with **Choose AI…** |
+| `sift.ai.provider` | `claude` | `claude`, `codex`, `gemini`, `vscode` or `custom`. Easiest to set with **Choose AI** |
 | `sift.ai.model` | empty | Model in the provider's own terms, e.g. `opus`, `flash`, or a VS Code model id; empty for the provider's default |
 | `sift.ai.command` | empty | For `custom`: the command. For a command line AI: its path, when Sift can't find it |
 | `sift.ai.additionalDirectories` | `[]` | Folders outside the repo the AI may read, e.g. `~/code` for sibling worktrees (Claude Code, Gemini CLI) |
@@ -167,7 +171,7 @@ Also in the Sift view and command palette: Plan commits with AI · Choose AI… 
 
 ## Limitations and roadmap
 
-- **Whole files per commit.** Splitting one file's hunks across commits is next (M3).
+- **Splitting works on changes to existing text files**: new, deleted and binary files move whole.
 - **Renames** show as delete + add.
 - **AI edits are plain file writes**, not editor undo steps. Use the "this round" diff or git to review or revert them.
 - **Planned:** reviewing an already-committed range (rebase mode).

@@ -77,7 +77,7 @@
       },
       {
         "command": "sift.chooseAi",
-        "title": "Choose AI…",
+        "title": "Choose AI",
         "category": "Sift",
         "icon": "$(hubot)"
       },
@@ -127,7 +127,7 @@
       },
       {
         "command": "sift.compareVersions",
-        "title": "A specific version…",
+        "title": "A specific version",
         "category": "Sift",
         "icon": "$(versions)"
       },
@@ -189,8 +189,36 @@
       },
       {
         "command": "sift.moveToCommit",
-        "title": "Move to commit…",
+        "title": "Move to commit",
         "category": "Sift"
+      },
+      {
+        "command": "sift.splitFile",
+        "title": "Split changes across commits",
+        "category": "Sift",
+        "icon": "$(split-horizontal)"
+      },
+      {
+        "command": "sift.moveChangeToCommit",
+        "title": "Move selected changes to commit",
+        "category": "Sift"
+      },
+      {
+        "command": "sift.amendInto",
+        "title": "Amend into commit",
+        "category": "Sift"
+      },
+      {
+        "command": "sift.discardChanges",
+        "title": "Discard changes",
+        "category": "Sift",
+        "icon": "$(discard)"
+      },
+      {
+        "command": "sift.pull",
+        "title": "Pull",
+        "category": "Sift",
+        "icon": "$(repo-pull)"
       },
       {
         "command": "sift.approveCommit",
@@ -218,7 +246,7 @@
       },
       {
         "command": "sift.setDependencies",
-        "title": "Set the commits it builds on…",
+        "title": "Set the commits it builds on",
         "category": "Sift",
         "icon": "$(references)"
       },
@@ -248,13 +276,13 @@
       },
       {
         "command": "sift.filterFiles",
-        "title": "Filter files…",
+        "title": "Filter files",
         "category": "Sift",
         "icon": "$(filter)"
       },
       {
         "command": "sift.editFilter",
-        "title": "Change the file filter…",
+        "title": "Change the file filter",
         "category": "Sift",
         "icon": "$(filter-filled)"
       },
@@ -610,6 +638,11 @@
           "group": "navigation@4"
         },
         {
+          "command": "sift.pull",
+          "when": "view == sift.plan && sift.active && sift.behind",
+          "group": "navigation@3"
+        },
+        {
           "command": "sift.refresh",
           "when": "view == sift.plan && sift.active",
           "group": "navigation@5"
@@ -772,6 +805,21 @@
           "group": "2@1"
         },
         {
+          "command": "sift.splitFile",
+          "when": "viewItem =~ /^file-(todo|in-progress|done|unassigned)$/",
+          "group": "2@2"
+        },
+        {
+          "command": "sift.amendInto",
+          "when": "viewItem =~ /^(file-(todo|in-progress|done|unassigned)|dir|dir-unassigned|commit|commit-current)$/",
+          "group": "2@3"
+        },
+        {
+          "command": "sift.discardChanges",
+          "when": "viewItem =~ /^(file-(todo|in-progress|done|unassigned)|dir|dir-unassigned)$/",
+          "group": "9_discard@1"
+        },
+        {
           "command": "sift.setDependencies",
           "when": "view == sift.plan && viewItem =~ /^commit(-current)?$/",
           "group": "2@3"
@@ -795,6 +843,13 @@
           "command": "sift.revertCommit",
           "when": "view == sift.plan && viewItem == commit-committed-pushed",
           "group": "inline"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "sift.moveChangeToCommit",
+          "when": "sift.active && sift.activeFileInReview && isInDiffEditor && resourceScheme == file",
+          "group": "sift@1"
         }
       ],
       "editor/title": [
@@ -838,9 +893,49 @@
         {
           "command": "sift.toggleExplanations",
           "group": "3_ai@2"
+        },
+        {
+          "command": "sift.moveChangeToCommit",
+          "group": "4_changes@1"
+        },
+        {
+          "command": "sift.splitFile",
+          "group": "4_changes@2"
+        },
+        {
+          "command": "sift.moveToCommit",
+          "group": "4_changes@3"
+        },
+        {
+          "command": "sift.amendInto",
+          "group": "4_changes@4"
+        },
+        {
+          "command": "sift.discardChanges",
+          "group": "9_discard@1"
         }
       ],
       "commandPalette": [
+        {
+          "command": "sift.splitFile",
+          "when": "sift.active"
+        },
+        {
+          "command": "sift.moveChangeToCommit",
+          "when": "sift.active && sift.activeFileInReview"
+        },
+        {
+          "command": "sift.amendInto",
+          "when": "sift.active"
+        },
+        {
+          "command": "sift.discardChanges",
+          "when": "sift.active"
+        },
+        {
+          "command": "sift.pull",
+          "when": "sift.active"
+        },
         {
           "command": "sift.commitApproved",
           "when": "sift.active"
@@ -1127,6 +1222,21 @@
           "command": "sift.moveToCommit",
           "when": "resourcePath in sift.todoFiles || resourcePath in sift.inProgressFiles || resourcePath in sift.doneFiles || resourcePath in sift.unassignedFiles",
           "group": "2@1"
+        },
+        {
+          "command": "sift.splitFile",
+          "when": "resourcePath in sift.todoFiles || resourcePath in sift.inProgressFiles || resourcePath in sift.doneFiles || resourcePath in sift.unassignedFiles",
+          "group": "2@2"
+        },
+        {
+          "command": "sift.amendInto",
+          "when": "resourcePath in sift.todoFiles || resourcePath in sift.inProgressFiles || resourcePath in sift.doneFiles || resourcePath in sift.unassignedFiles",
+          "group": "2@3"
+        },
+        {
+          "command": "sift.discardChanges",
+          "when": "resourcePath in sift.todoFiles || resourcePath in sift.inProgressFiles || resourcePath in sift.doneFiles || resourcePath in sift.unassignedFiles",
+          "group": "9_discard@1"
         }
       ]
     },
@@ -1219,7 +1329,7 @@
             "Any command that reads the prompt on stdin and prints the answer: set it in Command."
           ],
           "default": "claude",
-          "markdownDescription": "Which AI Sift asks. The easiest way to set it is **Sift: Choose AI…**, or click the AI's name in the status bar."
+          "markdownDescription": "Which AI Sift asks. The easiest way to set it is **Sift: Choose AI**, or click the AI's name in the status bar."
         },
         "sift.ai.model": {
           "type": "string",

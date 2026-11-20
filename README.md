@@ -99,7 +99,9 @@ For example: *"Split my changes into commits with Sift"*, or *"Answer my Sift co
 
 ## Plan file
 
-Sift also picks up `.sift/plan.json` whenever it is written, by hand or by another tool. With no session it starts one; if it would replace a plan under review, Sift asks first.
+Sift also picks up `.sift/plan.json` whenever it is written, by hand or by another tool, applies it on its own and then deletes it: the plan lives in Sift from then on. With no session it starts one. The plan replaces the commits not committed yet, but a commit in the plan with the same message, or with most of the same files, stays the same commit: it keeps its review (file statuses, versions, comments) and takes the new message. Sift asks first only when the plan drops a commit you already started reviewing (Ignore deletes the file too). A plan Sift can't load (bad JSON, a file that isn't changed) stays, so it can be fixed.
+
+To change the plan from outside Sift (an agent, a script), write `.sift/plan.json` with every commit not committed yet. Don't edit `.sift/state.json`: Sift reloads it when it changes, but it is Sift's own file and its shape can change.
 
 ```json
 {

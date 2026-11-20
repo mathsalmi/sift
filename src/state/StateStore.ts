@@ -2,6 +2,13 @@ import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import type { ReviewState } from '../core/types';
 
+/** The state file changed on disk (an agent, a hand edit, another window) after it was last read. */
+export class StaleStateError extends Error {
+  constructor(readonly filePath: string) {
+    super(`${filePath} changed outside Sift.`);
+  }
+}
+
 /** Reads and writes the review state file atomically (temp file + rename). */
 export class StateStore {
   /** The file content as this store last read or wrote it; null when there was no file. */
@@ -47,7 +54,14 @@ export class StateStore {
     return withDefaults(state);
   }
 
+  /** Throws StaleStateError instead of overwriting a file something else changed since this store read it. */
   async save(state: ReviewState): Promise<void> {
+    if (this.known !== undefined) {
+      const onDisk = await fs.readFile(this.filePath, 'utf8').catch(() => null);
+      if (onDisk !== this.known) {
+        throw new StaleStateError(this.filePath);
+      }
+    }
     await fs.mkdir(path.dirname(this.filePath), { recursive: true });
     const temp = `${this.filePath}.${process.pid}.tmp`;
     const raw = JSON.stringify(toSaved(state), null, 2) + '\n';

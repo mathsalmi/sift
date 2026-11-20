@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ReviewController } from '../src/controller/ReviewController';
@@ -58,6 +59,7 @@ describe('ReviewController end to end', () => {
       ],
     });
     expect(await controller.loadPlan()).toEqual({ commits: 2, unassigned: 0 });
+    expect(existsSync(path.join(repo.dir, '.sift/plan.json'))).toBe(false);
 
     const model = controller.review!;
     const [first, second] = model.commitsInOrder();
@@ -345,15 +347,71 @@ describe('plan file pickup', () => {
     expect(model.state.threads).toMatchObject([{ kind: 'explanation', path: 'src/a.ts', line: 0, lineText: 'a changed' }]);
     expect(model.state.session.showExplanations).toBe(true);
 
-    // Same file again: nothing to do.
+    // Applied plans are deleted: the plan lives in the state.
+    expect(existsSync(path.join(repo.dir, '.sift/plan.json'))).toBe(false);
     expect(await controller.checkPlanFile()).toEqual({ result: 'none' });
 
-    // A different plan while one is under review: ask first.
-    writePlan({ commits: [{ message: 'Everything', files: ['src/a.ts', 'src/b.ts'] }] });
+    // An updated plan that keeps "Change a" applies without asking, and "Change a" keeps its review.
+    const id = model.commitsInOrder()[0].id;
+    model.setStatus(['src/a.ts'], 'in-progress');
+    writePlan({
+      commits: [
+        { message: 'Change a', intent: 'Clearer names', files: ['src/a.ts'] },
+        { message: 'Change b', files: ['src/b.ts'], dependsOn: [1] },
+      ],
+    });
+    expect(await controller.checkPlanFile()).toMatchObject({ result: 'applied', commits: 2, unassigned: 0 });
+    const [a, b] = controller.review!.commitsInOrder();
+    expect([a.id, a.intent, b.message, b.dependsOn]).toEqual([id, 'Clearer names', 'Change b', [id]]);
+    expect(controller.review!.filesOf(id).map((f) => [f.path, f.status])).toEqual([['src/a.ts', 'in-progress']]);
+    expect(controller.review!.state.threads).toHaveLength(1);
+
+    // A plan that drops a commit already under review: ask first.
+    writePlan({ commits: [{ message: 'Only b', files: ['src/b.ts'] }] });
     const outcome = await controller.checkPlanFile();
-    expect(outcome.result).toBe('needs-confirm');
-    await controller.dismissPlanFile((outcome as { hash: string }).hash);
+    expect(outcome).toEqual({ result: 'needs-confirm', lost: ['Change a'] });
+    expect(existsSync(path.join(repo.dir, '.sift/plan.json'))).toBe(true);
+    await controller.discardPlanFile();
     expect(await controller.checkPlanFile()).toEqual({ result: 'none' });
+    expect(controller.review!.commitsInOrder().map((c) => c.message)).toEqual(['Change a', 'Change b']);
+  });
+
+  it('keeps a plan file that fails, so it can be fixed', async () => {
+    repo.write('src/a.ts', 'a changed\n');
+    await controller.startReview();
+    writePlan({ commits: [{ message: 'X', files: ['nope.ts'] }] });
+    await expect(controller.checkPlanFile()).rejects.toThrow(/not a changed file/);
+    expect(existsSync(path.join(repo.dir, '.sift/plan.json'))).toBe(true);
+  });
+
+  it('deletes a plan file a session from before applied already', async () => {
+    repo.write('src/a.ts', 'a changed\n');
+    writePlan({ commits: [{ message: 'A', files: ['src/a.ts'] }] });
+    await controller.checkPlanFile();
+    const raw = JSON.stringify({ commits: [{ message: 'Old', files: ['src/a.ts'] }] });
+    writePlan(JSON.parse(raw));
+    const legacy = controller.review!.state.session as { planFileHash?: string };
+    legacy.planFileHash = createHash('sha256').update(raw).digest('hex').slice(0, 16);
+
+    expect(await controller.checkPlanFile()).toEqual({ result: 'none' });
+    expect(existsSync(path.join(repo.dir, '.sift/plan.json'))).toBe(false);
+    expect(controller.review!.commitsInOrder().map((c) => c.message)).toEqual(['A']);
+    expect(legacy.planFileHash).toBeUndefined();
+  });
+
+  it('loads a state file changed outside Sift instead of overwriting it', async () => {
+    repo.write('src/a.ts', 'a changed\n');
+    writePlan({ commits: [{ message: 'A', files: ['src/a.ts'] }] });
+    await controller.checkPlanFile();
+    const saved = JSON.parse(readFileSync(controller.statePath, 'utf8'));
+    saved.commits[0].message = 'Edited outside';
+    writeFileSync(controller.statePath, JSON.stringify(saved));
+
+    // The window still holds the old plan; its next save must not clobber the outside edit.
+    await expect(controller.newCommit('B')).rejects.toThrow('changed outside this window');
+    expect(controller.review!.commitsInOrder().map((c) => c.message)).toEqual(['Edited outside']);
+    await controller.newCommit('B');
+    expect(controller.review!.commitsInOrder().map((c) => c.message)).toEqual(['Edited outside', 'B']);
   });
 
   it('abort deletes the plan file so it does not start a new session', async () => {

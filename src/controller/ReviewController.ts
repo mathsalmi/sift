@@ -22,7 +22,7 @@ import {
   undoCommits,
 } from '../git/history';
 import { type SnapshotService, sessionRefPrefix, snapshotRef } from '../git/SnapshotService';
-import { excludeStateDir, type StateStore } from '../state/StateStore';
+import { excludeStateDir, StaleStateError, type StateStore } from '../state/StateStore';
 import { SCHEME, snapshotUri } from '../ui/SnapshotContentProvider';
 
 export type DiffMode = 'round' | 'cumulative';
@@ -31,7 +31,7 @@ export type DiffMode = 'round' | 'cumulative';
 export type PlanFileResult =
   | { result: 'none' }
   | { result: 'applied'; commits: number; unassigned: number; started: boolean }
-  | { result: 'needs-confirm'; hash: string };
+  | { result: 'needs-confirm'; lost: string[] };
 
 /**
  * Single owner of the review state. UI parts call its methods and re-render on `onDidChange`.
@@ -129,7 +129,6 @@ export class ReviewController implements vscode.Disposable {
       await excludeStateDir(this.gitDir);
     }
     this.model = ReviewModel.create(newSessionId(), head, changes, new Date().toISOString());
-    this.model.state.session.planFileHash = '';
     await this.persist();
     return changes.length;
   }
@@ -271,52 +270,66 @@ export class ReviewController implements vscode.Disposable {
     return path.join(this.root, '.sift', 'plan.json');
   }
 
+  /**
+   * Applies .sift/plan.json and deletes it: the file is only a way in for plans from other tools,
+   * the plan itself lives in the state.
+   */
   async loadPlan(): Promise<{ commits: number; unassigned: number }> {
     const raw = await fs.readFile(this.planFilePath(), 'utf8').catch(() => {
       throw new Error(`No plan found at ${this.planFilePath()}.`);
     });
     await this.ensureSession();
     const result = await this.applyPlanInput(parsePlan(raw), false);
-    this.require().state.session.planFileHash = hashOf(raw);
     await this.persist();
+    await this.discardPlanFile();
     return result;
   }
 
   /**
-   * Picks up .sift/plan.json when it is new: applies it right away (starting a session if needed),
-   * or asks first when it would replace a plan that is already under review.
+   * Picks up .sift/plan.json: applies it right away (starting a session if needed) and deletes it,
+   * or asks first when it would drop commits already under review. A plan that fails stays, to be fixed.
    */
   async checkPlanFile(): Promise<PlanFileResult> {
     const raw = await fs.readFile(this.planFilePath(), 'utf8').catch(() => null);
-    if (raw === null || !raw.trim()) {
+    if (raw === null) {
       return { result: 'none' };
     }
-    const hash = hashOf(raw);
-    if (this.model?.state.session.planFileHash === hash) {
+    if (!raw.trim() || (await this.wasAppliedBefore(raw))) {
+      await this.discardPlanFile();
       return { result: 'none' };
     }
-    if (this.model && this.model.state.session.planFileHash === undefined) {
-      // Session from before plan files were tracked: its plan.json was already loaded by hand.
-      this.model.state.session.planFileHash = hash;
-      await this.persist();
-      return { result: 'none' };
-    }
-    if (this.model && this.model.state.commits.some((c) => c.status !== 'committed')) {
-      return { result: 'needs-confirm', hash };
+    const plan = parsePlan(raw);
+    // Commits the plan keeps (same message, or most of the same files) keep their review,
+    // so only dropping reviewed work needs a yes.
+    const lost = this.model?.reviewLostByPlan(plan) ?? [];
+    if (lost.length > 0) {
+      return { result: 'needs-confirm', lost };
     }
     const started = await this.ensureSession();
-    const result = await this.applyPlanInput(parsePlan(raw), false);
-    this.require().state.session.planFileHash = hash;
+    const result = await this.applyPlanInput(plan, false);
     await this.persist();
+    await this.discardPlanFile();
     return { result: 'applied', ...result, started };
   }
 
-  /** Remembers a plan file the user chose not to load, so it isn't offered again. */
-  async dismissPlanFile(hash: string): Promise<void> {
-    if (this.model) {
-      this.model.state.session.planFileHash = hash;
-      await this.persist();
+  /** Deletes .sift/plan.json (after applying it, or when the user chose not to). */
+  async discardPlanFile(): Promise<void> {
+    await fs.rm(this.planFilePath(), { force: true });
+  }
+
+  /**
+   * Sessions from before plan files were deleted once applied remember the last one's hash:
+   * a plan file with that hash was already applied. The hash is dropped once checked.
+   */
+  private async wasAppliedBefore(raw: string): Promise<boolean> {
+    const session = this.model?.state.session as { planFileHash?: string } | undefined;
+    if (!session || session.planFileHash === undefined) {
+      return false;
     }
+    const applied = session.planFileHash === hashOf(raw);
+    delete session.planFileHash;
+    await this.persist();
+    return applied;
   }
 
   async newCommit(message: string): Promise<string> {
@@ -761,7 +774,16 @@ export class ReviewController implements vscode.Disposable {
 
   private async persist(): Promise<void> {
     if (this.model) {
-      await this.store.save(this.model.state);
+      try {
+        await this.store.save(this.model.state);
+      } catch (error) {
+        if (!(error instanceof StaleStateError)) {
+          throw error;
+        }
+        // Something else (an agent, a hand edit, another window) saved the plan meanwhile: theirs wins.
+        await this.reloadState();
+        throw new Error('The plan was changed outside this window, so Sift loaded that version. Try again.');
+      }
     }
     await this.fire();
   }

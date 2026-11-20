@@ -17,8 +17,6 @@ export interface Session {
   status: 'active' | 'done';
   createdAt: string;
   showExplanations: boolean;
-  /** Hash of the .sift/plan.json content last applied or dismissed, so a plan file is picked up once. */
-  planFileHash?: string;
 }
 
 export interface PlanCommit {

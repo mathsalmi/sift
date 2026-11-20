@@ -169,7 +169,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   );
 
   const register = (id: string, handler: (...args: never[]) => unknown) => {
-    context.subscriptions.push(vscode.commands.registerCommand(id, guarded(handler)));
+    const run = async (...args: never[]) => {
+      // Work on the latest saved plan, even when an outside edit landed just before the watcher noticed it.
+      await reloadState().catch(() => undefined);
+      return handler(...args);
+    };
+    context.subscriptions.push(vscode.commands.registerCommand(id, guarded(run)));
   };
 
   // ---- session ----
@@ -882,15 +887,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
       if (outcome.result === 'needs-confirm') {
         planBusy = false;
-        const choice = await vscode.window.showInformationMessage(
-          'Sift: .sift/plan.json has a new plan. Replace the commits that are not committed yet?',
-          'Replace',
+        const choice = await vscode.window.showWarningMessage(
+          `Sift: the new plan in .sift/plan.json drops commits you already started reviewing: ${quoteList(outcome.lost)}. Apply it?`,
+          'Apply',
           'Ignore',
         );
-        if (choice === 'Replace') {
+        if (choice === 'Apply') {
           await controller.loadPlan();
         } else if (choice === 'Ignore') {
-          await controller.dismissPlanFile(outcome.hash);
+          await controller.discardPlanFile();
         }
       }
     } catch (error) {

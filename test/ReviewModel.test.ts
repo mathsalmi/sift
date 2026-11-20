@@ -31,6 +31,30 @@ describe('applyPlan', () => {
     expect(m.filesOf(null).map((f) => f.path)).toEqual(['c.ts']);
   });
 
+  it('keeps a reworded commit that keeps most of its files, with its review, and adds new ones after', () => {
+    const m = model(['a.ts', 'b.ts', 'c.ts', 'd.ts']);
+    m.applyPlan({ commits: [{ message: 'Old words', files: ['a.ts', 'b.ts'] }] });
+    const id = m.commitsInOrder()[0].id;
+    m.startCommit(id);
+    m.setStatus(['a.ts'], 'in-progress');
+
+    m.applyPlan({
+      commits: [
+        { message: 'New first', files: ['d.ts'] },
+        { message: 'New words', files: ['a.ts', 'b.ts', 'c.ts'] },
+      ],
+    });
+
+    const [first, second] = m.commitsInOrder();
+    expect([first.message, second.id, second.message, second.status]).toEqual(['New first', id, 'New words', 'in-review']);
+    expect(first.id).not.toBe(id);
+    expect(m.filesOf(id).map((f) => [f.path, f.status])).toEqual([
+      ['a.ts', 'in-progress'],
+      ['b.ts', 'todo'],
+      ['c.ts', 'todo'],
+    ]);
+  });
+
   it('rejects unknown and duplicate paths without changing anything', () => {
     const m = model();
 

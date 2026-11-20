@@ -450,7 +450,7 @@
         "canBeReferencedInPrompt": true,
         "icon": "$(git-commit)",
         "userDescription": "Split the uncommitted changes into a plan of atomic commits in Sift.",
-        "modelDescription": "Sets the Sift commit plan: splits the repository's uncommitted changes into ordered, atomic commits (foundations first, each commit builds on its own), with an intent, risk notes and explanations on the lines that matter. Read the changes first (e.g. git diff). Replaces commits that are not committed yet. Sift never commits by itself: the developer reviews and approves each commit.",
+        "modelDescription": "Sets the Sift commit plan: splits the repository's uncommitted changes into ordered, atomic commits (foundations first, each commit builds on its own), with an intent, risk notes and explanations on the lines that matter. Read the changes first (e.g. git diff). Replaces commits that are not committed yet; a commit with the same message, or most of the same files, keeps its review. Sift never commits by itself: the developer reviews and approves each commit.",
         "inputSchema": {
           "type": "object",
           "properties": {

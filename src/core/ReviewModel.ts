@@ -536,35 +536,57 @@ export class ReviewModel {
 
     const committed = this.state.commits.filter((c) => c.status === 'committed');
     const committedIds = new Set(committed.map((c) => c.id));
-    this.state.commits = [...committed];
+    // A planned commit with the same message as one in the plan stays that commit: it keeps its id,
+    // versions, comments and file reviews, so a plan can be updated without starting the review over.
+    const reusable = this.reusableCommits(plan);
+    const kept = new Set([...reusable.values()].map((c) => c.id));
+    this.state.commits = [...committed, ...reusable.values()];
     for (const file of this.state.files) {
       if (!this.isCommittedFile(file)) {
-        file.commitId = null;
+        file.commitId = file.commitId && kept.has(file.commitId) ? file.commitId : null;
       }
     }
-    if (this.state.session.currentCommitId && !committed.some((c) => c.id === this.state.session.currentCommitId)) {
+    const current = this.state.session.currentCommitId;
+    if (current && !committedIds.has(current) && !kept.has(current)) {
       this.state.session.currentCommitId = null;
     }
 
-    const created: PlanCommit[] = [];
-    for (const input of plan.commits) {
-      const commit = this.addCommit(input.message, input.intent ?? '', input.riskNotes ?? []);
-      const dependsOn = [...new Set(input.dependsOn ?? [])].map((n) => created[n - 1].id);
-      if (dependsOn.length > 0) {
-        commit.dependsOn = dependsOn;
+    let order = committed.reduce((max, c) => Math.max(max, c.order), 0);
+    const placed: PlanCommit[] = [];
+    plan.commits.forEach((input, index) => {
+      const reused = reusable.get(index);
+      const commit = reused ?? this.addCommit(input.message, input.intent ?? '', input.riskNotes ?? []);
+      if (reused) {
+        reused.message = input.message.trim();
+        reused.intent = input.intent ?? reused.intent;
+        reused.riskNotes = input.riskNotes ?? reused.riskNotes;
       }
-      created.push(commit);
+      commit.order = ++order;
+      const before = new Set(placed.map((c) => c.id));
+      const dependsOn =
+        input.dependsOn !== undefined
+          ? [...new Set(input.dependsOn)].map((n) => placed[n - 1].id)
+          : (reused?.dependsOn ?? []).filter((id) => before.has(id) || committedIds.has(id));
+      commit.dependsOn = dependsOn.length > 0 ? dependsOn : undefined;
+      placed.push(commit);
       for (const filePath of input.files) {
         const file = this.findFile(filePath);
-        if (file) {
+        if (file && file.commitId !== commit.id) {
           file.commitId = commit.id;
+          // A file that changes commit is reviewed again in its new one.
+          this.clearReview(file);
         }
+      }
+    });
+    for (const file of this.state.files) {
+      if (!file.commitId && file.status !== 'todo') {
+        this.clearReview(file);
       }
     }
 
-    // Explanations of the old plan go away (the new plan brings its own); the user's comments follow their file.
+    // Explanations of dropped commits go away (the plan brings its own); the user's comments follow their file.
     this.state.threads = this.state.threads.filter(
-      (t) => (t.commitId !== null && committedIds.has(t.commitId)) || t.kind === 'comment',
+      (t) => t.kind === 'comment' || (t.commitId !== null && (committedIds.has(t.commitId) || kept.has(t.commitId))),
     );
     for (const thread of this.state.threads) {
       if (thread.commitId === null || !committedIds.has(thread.commitId)) {
@@ -574,6 +596,68 @@ export class ReviewModel {
     this.threadsRevision++;
 
     return { unassigned: this.filesOf(null).length };
+  }
+
+  /**
+   * Planned commits a plan keeps, by the plan's commit index: matched on the whole message, then on the
+   * subject, then on most of their files.
+   */
+  private reusableCommits(plan: PlanInput): Map<number, PlanCommit> {
+    const open = this.state.commits.filter((c) => c.status !== 'committed');
+    const result = new Map<number, PlanCommit>();
+    const taken = new Set<string>();
+    const match = (key: (message: string) => string) => {
+      plan.commits.forEach((input, index) => {
+        if (result.has(index)) {
+          return;
+        }
+        const found = open.find((c) => !taken.has(c.id) && key(c.message) === key(input.message));
+        if (found) {
+          result.set(index, found);
+          taken.add(found.id);
+        }
+      });
+    };
+    match((message) => message.trim());
+    match((message) => message.split('\n')[0].trim());
+    // A reworded commit is still the same commit when it keeps most of its files.
+    plan.commits.forEach((input, index) => {
+      if (result.has(index)) {
+        return;
+      }
+      const wanted = new Set(input.files);
+      const best = open
+        .filter((c) => !taken.has(c.id))
+        .map((c) => {
+          const files = this.filesOf(c.id).map((f) => f.path);
+          return { commit: c, shared: files.filter((f) => wanted.has(f)).length, total: files.length };
+        })
+        .filter((m) => m.shared * 2 > m.total)
+        .sort((x, y) => y.shared - x.shared)[0];
+      if (best) {
+        result.set(index, best.commit);
+        taken.add(best.commit.id);
+      }
+    });
+    return result;
+  }
+
+  /**
+   * Subjects of the planned commits a plan would drop although review already started on them
+   * (the commit under review, or one with reviewed files, versions or comments).
+   */
+  reviewLostByPlan(plan: PlanInput): string[] {
+    const kept = new Set([...this.reusableCommits(plan).values()].map((c) => c.id));
+    return this.commitsInOrder()
+      .filter((c) => c.status !== 'committed' && !kept.has(c.id))
+      .filter(
+        (c) =>
+          c.status === 'in-review' ||
+          this.iterationsOf(c.id).length > 0 ||
+          this.filesOf(c.id).some((f) => f.status !== 'todo') ||
+          this.state.threads.some((t) => t.commitId === c.id && t.kind === 'comment'),
+      )
+      .map(subjectOf);
   }
 
   addCommit(message: string, intent = '', riskNotes: string[] = []): PlanCommit {

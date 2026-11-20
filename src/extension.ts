@@ -979,6 +979,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     const file = filePath ? controller.review?.findFile(filePath) : undefined;
     void vscode.commands.executeCommand('setContext', 'sift.activeFileApproved', file?.status === 'done');
     void vscode.commands.executeCommand('setContext', 'sift.activeFileAssigned', Boolean(file?.commitId));
+    // Sift's diff menu shows only on Sift's own files, not on every diff editor.
+    void vscode.commands.executeCommand('setContext', 'sift.activeFileInReview', Boolean(file));
   };
   context.subscriptions.push(
     vscode.window.onDidChangeActiveTextEditor(updateActiveFileContext),

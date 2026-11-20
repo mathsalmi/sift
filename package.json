@@ -799,44 +799,45 @@
       ],
       "editor/title": [
         {
-          "command": "sift.askAi",
-          "when": "sift.active && isInDiffEditor",
+          "submenu": "sift.diff",
+          "when": "sift.active && isInDiffEditor && sift.activeFileInReview",
           "group": "navigation@0"
-        },
-        {
-          "command": "sift.previousFile",
-          "when": "sift.active && isInDiffEditor",
-          "group": "navigation@1"
-        },
-        {
-          "command": "sift.nextFile",
-          "when": "sift.active && isInDiffEditor",
-          "group": "navigation@2"
-        },
+        }
+      ],
+      "sift.diff": [
         {
           "command": "sift.markDone",
-          "when": "sift.active && isInDiffEditor && sift.activeFileAssigned && !sift.activeFileApproved",
-          "group": "navigation@3"
+          "when": "sift.activeFileAssigned && !sift.activeFileApproved",
+          "group": "1_review@1"
         },
         {
           "command": "sift.unapproveFile",
-          "when": "sift.active && isInDiffEditor && sift.activeFileApproved",
-          "group": "navigation@3"
+          "when": "sift.activeFileApproved",
+          "group": "1_review@1"
         },
         {
           "command": "sift.nextTodo",
-          "when": "sift.active && isInDiffEditor",
-          "group": "sift@1"
+          "group": "1_review@2"
         },
         {
-          "command": "sift.toggleExplanations",
-          "when": "sift.active && isInDiffEditor",
-          "group": "navigation@5"
+          "command": "sift.previousFile",
+          "group": "2_navigate@1"
+        },
+        {
+          "command": "sift.nextFile",
+          "group": "2_navigate@2"
         },
         {
           "submenu": "sift.compareWith",
-          "when": "sift.active && isInDiffEditor",
-          "group": "navigation@4"
+          "group": "2_navigate@3"
+        },
+        {
+          "command": "sift.askAi",
+          "group": "3_ai@1"
+        },
+        {
+          "command": "sift.toggleExplanations",
+          "group": "3_ai@2"
         }
       ],
       "commandPalette": [
@@ -1293,6 +1294,14 @@
       {
         "id": "sift.tab",
         "label": "Sift"
+      },
+      {
+        "id": "sift.diff",
+        "label": "Sift",
+        "icon": {
+          "light": "resources/sift-light.svg",
+          "dark": "resources/sift-dark.svg"
+        }
       }
     ]
   },

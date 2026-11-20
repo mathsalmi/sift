@@ -136,7 +136,7 @@ To change the plan from outside Sift (an agent, a script), write `.sift/plan.jso
 | Send a comment (Ask AI) | Cmd+Enter | Ctrl+Enter |
 | Open the Sift view (also when the sidebar is hidden) | Ctrl+Shift+S | Ctrl+Alt+S |
 
-Diff editor buttons: Ask AI · Previous / next file in the commit · Approve / unapprove file · Compare with (previous version, last commit, or a specific version) · Show / hide AI explanations (💡); and in its **…** menu: Next to do.
+In the diff editor, Sift's actions are all under one **Sift** button (the Sift icon) in the editor toolbar, shown only on files in the review: Approve / unapprove file · Next to do · Previous / next file in the commit · Compare with (previous version, last commit, or a specific version) · Ask AI about all open comments · Show / hide AI explanations.
 
 Right-click a commit for: Approve and commit · Review this commit · Edit message · Move up / down · Delete. Right-click a file for: Approve / unapprove · Mark in progress / to do · Add to .gitignore · Exclude locally (.git/info/exclude) · Move to commit… (lists the other commits, Unassigned and **New commit…**; with no other commit it goes straight to naming a new one). Right-click a folder for the same on every file under it (Add to .gitignore and Exclude locally add one rule for the whole folder, so files added to it later stay hidden too). Right-click a locally excluded file or folder for: Remove from .git/info/exclude. Right-click an editor tab of a review file for **Sift**: Show in Sift sidebar · Approve / unapprove · Mark in progress · Mark to do · Add to .gitignore · Exclude locally · Move to commit….
 

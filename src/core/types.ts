@@ -58,6 +58,28 @@ export interface ReviewFile {
   binary: boolean;
   /** Set when a new snapshot changed this file (snapshot number); shown as "changed in vK" with the file's own version. */
   changedInIteration?: number;
+  /**
+   * Set on a part of a file split across commits: the blocks of changes (see git/hunks.ts) this part
+   * holds. A file has one entry per commit it is split across; the one without `hunks` holds the
+   * changes no other part holds.
+   */
+  hunks?: HunkRef[];
+  /** Derived, never saved: for a part of a split file, how many of the file's changes it holds. */
+  part?: { own: number; total: number };
+}
+
+/** A block of changes held by a part of a split file, with where it was last seen in the working tree. */
+export interface HunkRef {
+  key: string;
+  start: number;
+  lines: number;
+}
+
+/** A file of the review, or with `commitId` its part in that commit (for files split across commits). */
+export interface FileRef {
+  path: string;
+  /** Left out: the file's part in the commit in review, else its main part. */
+  commitId?: string | null;
 }
 
 /**

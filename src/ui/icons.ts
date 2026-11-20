@@ -57,6 +57,9 @@ export function fileDescription(file: ReviewFile, withDir: boolean, versionOf: (
   } else if (file.adds !== null || file.dels !== null) {
     parts.push(`+${file.adds ?? '?'} -${file.dels ?? '?'}`);
   }
+  if (file.part) {
+    parts.push(`${file.part.own} of ${file.part.total} changes`);
+  }
   if (file.changedSinceApproval) {
     parts.push('changed since approval');
   } else if (file.changedInIteration !== undefined) {

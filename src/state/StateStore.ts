@@ -98,7 +98,7 @@ function toSaved(state: ReviewState): unknown {
     ...state,
     version: 2,
     commits: state.commits.map(({ status: _status, sha: _sha, pushed: _pushed, revertedBy: _revertedBy, ...decision }) => decision),
-    files: state.files.map(({ changeType: _type, adds: _adds, dels: _dels, binary: _binary, ...decision }) => decision),
+    files: state.files.map(({ changeType: _type, adds: _adds, dels: _dels, binary: _binary, part: _part, ...decision }) => decision),
   };
 }
 
@@ -121,6 +121,7 @@ function withDefaults(state: ReviewState): ReviewState {
     file.adds = file.adds ?? null;
     file.dels = file.dels ?? null;
     file.binary = file.binary ?? false;
+    delete file.part;
   }
   delete (state.session as { lastHead?: string }).lastHead;
   state.threads = state.threads ?? [];

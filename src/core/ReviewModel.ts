@@ -1,7 +1,10 @@
 import type { FileChange } from '../git/changes';
+import { hunkSignature, type Hunk } from '../git/hunks';
 import type {
   CommitReviewStatus,
+  FileRef,
   FileStatus,
+  HunkRef,
   Iteration,
   MessageAuthor,
   PlanCommit,
@@ -22,6 +25,8 @@ export interface GitFacts {
   lastTouch: Map<string, { sha: string; age: number }>;
   /** Current content id of changed files that are approved. */
   blobs: Map<string, string>;
+  /** The blocks of changes of files split across commits (see splitPaths), by path. */
+  hunks?: Map<string, Hunk[]>;
 }
 
 /** What `sync` concluded, by commit subject, plus the commit refs the controller must write. */
@@ -103,10 +108,69 @@ export class ReviewModel {
     return commit;
   }
 
-  /** The pending entry for a path when there is one, else its committed history entry. */
-  findFile(filePath: string): ReviewFile | undefined {
+  /**
+   * The entry for a path in a commit (with `commitId`), else its pending entry: for a file split
+   * across commits, its part in the commit in review, else the main part. Falls back to its
+   * committed history entry.
+   */
+  findFile(filePath: string, commitId?: string | null): ReviewFile | undefined {
     const matches = this.state.files.filter((f) => f.path === filePath);
-    return matches.find((f) => !this.isCommittedFile(f)) ?? matches[0];
+    if (commitId !== undefined) {
+      return matches.find((f) => f.commitId === commitId && !this.isCommittedFile(f)) ?? matches.find((f) => f.commitId === commitId);
+    }
+    const pending = matches.filter((f) => !this.isCommittedFile(f));
+    const current = this.state.session.currentCommitId;
+    return (
+      pending.find((f) => current !== null && f.commitId === current) ??
+      pending.find((f) => !f.hunks) ??
+      pending[0] ??
+      matches[0]
+    );
+  }
+
+  resolve(ref: string | FileRef): ReviewFile | undefined {
+    return typeof ref === 'string' ? this.findFile(ref) : this.findFile(ref.path, ref.commitId);
+  }
+
+  /** The entries of a path not committed yet: one per commit a split file is split across. */
+  pendingEntries(filePath: string): ReviewFile[] {
+    return this.state.files.filter((f) => f.path === filePath && !this.isCommittedFile(f));
+  }
+
+  /** Whether the file's changes are split across commits. */
+  isSplit(filePath: string): boolean {
+    const entries = this.pendingEntries(filePath);
+    return entries.length > 1 || entries.some((f) => f.hunks);
+  }
+
+  /** Paths of files split across commits. */
+  splitPaths(): string[] {
+    return [...new Set(this.state.files.filter((f) => !this.isCommittedFile(f)).map((f) => f.path))].filter((p) => this.isSplit(p));
+  }
+
+  /**
+   * Paths whose blocks of changes sync needs: split files, and files approved as a part that may
+   * have just become whole (their approval is checked against those blocks).
+   */
+  hunkPaths(): string[] {
+    const approvedParts = this.state.files
+      .filter((f) => !this.isCommittedFile(f) && f.approvedBlob?.startsWith('hunks:'))
+      .map((f) => f.path);
+    return [...new Set([...this.splitPaths(), ...approvedParts])];
+  }
+
+  /** The keys of the blocks of changes an entry holds, out of all of the file's (`all`). */
+  ownKeys(file: ReviewFile, all: string[]): string[] {
+    if (file.hunks) {
+      const own = new Set(file.hunks.map((h) => h.key));
+      return all.filter((k) => own.has(k));
+    }
+    const claimed = new Set(
+      this.pendingEntries(file.path)
+        .filter((f) => f !== file && f.hunks)
+        .flatMap((f) => f.hunks!.map((h) => h.key)),
+    );
+    return all.filter((k) => !claimed.has(k));
   }
 
   filesOf(commitId: string | null): ReviewFile[] {
@@ -199,13 +263,13 @@ export class ReviewModel {
   }
 
   /** The file before/after `filePath` in its commit (or in Unassigned), without wrapping. */
-  adjacentFile(filePath: string, delta: -1 | 1): ReviewFile | null {
-    const file = this.findFile(filePath);
+  adjacentFile(filePath: string, delta: -1 | 1, commitId?: string | null): ReviewFile | null {
+    const file = this.findFile(filePath, commitId);
     if (!file) {
       return null;
     }
     const files = this.filesOf(file.commitId);
-    const index = files.findIndex((f) => f.path === filePath);
+    const index = files.indexOf(file);
     return files[index + delta] ?? null;
   }
 
@@ -370,37 +434,36 @@ export class ReviewModel {
       commit.status = this.state.session.currentCommitId === commit.id ? 'in-review' : 'planned';
     }
 
-    // Files: history of committed commits, then one pending entry per changed path.
-    const owners = new Map<string, ReviewFile>();
-    for (const file of this.state.files) {
-      if (this.isCommittedFile(file) || !changed.has(file.path)) {
-        continue;
-      }
-      const owner = owners.get(file.path);
-      // Two pending entries for a path (a commit came back while the path had a new entry): keep the planned one.
-      if (!owner || (!owner.commitId && file.commitId)) {
-        owners.set(file.path, file);
-      }
-    }
+    // Files: history of committed commits, then the pending entries of each changed path (one, or
+    // one per commit a split file is split across).
+    const pending = new Map<string, ReviewFile[]>();
     const kept: ReviewFile[] = [];
     for (const file of this.state.files) {
       if (this.isCommittedFile(file)) {
         file.status = 'done';
         kept.push(file);
-        continue;
+      } else if (changed.has(file.path)) {
+        pending.set(file.path, [...(pending.get(file.path) ?? []), file]);
       }
-      if (owners.get(file.path) !== file) {
-        continue; // no longer changed, or a duplicate
+    }
+    for (const [filePath, entries] of pending) {
+      const change = changed.get(filePath)!;
+      const merged = mergeDuplicates(entries);
+      const split = merged.length > 1 || merged.some((f) => f.hunks);
+      const hunks = facts.hunks?.get(filePath);
+      const parts = split && hunks && hunks.length > 0 ? this.settleParts(merged, hunks, outcome) : collapse(merged);
+      for (const file of parts) {
+        file.changeType = change.changeType;
+        file.binary = change.binary;
+        if (!file.part) {
+          file.adds = change.adds;
+          file.dels = change.dels;
+        }
+        kept.push(file);
       }
-      const change = changed.get(file.path)!;
-      file.changeType = change.changeType;
-      file.adds = change.adds;
-      file.dels = change.dels;
-      file.binary = change.binary;
-      kept.push(file);
     }
     for (const change of facts.changes) {
-      if (!owners.has(change.path)) {
+      if (!pending.has(change.path)) {
         kept.push(newFile(change));
       }
     }
@@ -413,20 +476,28 @@ export class ReviewModel {
       }
     }
 
-    // Approvals hold only for the content that was approved.
+    // Approvals hold only for the content that was approved (parts of split files: for their changes).
     for (const file of kept) {
-      if (file.status !== 'done' || this.isCommittedFile(file)) {
+      if (file.status !== 'done' || this.isCommittedFile(file) || file.part) {
         continue;
       }
       const blob = facts.blobs.get(file.path);
       if (blob === undefined) {
         continue;
       }
+      if (file.approvedBlob?.startsWith('hunks:')) {
+        // A part that now holds all of the file's changes: still approved if they are the ones approved.
+        const all = facts.hunks?.get(file.path);
+        if (all && hunkSignature(all.map((h) => h.key)) === file.approvedBlob) {
+          file.approvedBlob = blob;
+          continue;
+        }
+      }
       if (file.approvedBlob === undefined) {
         file.approvedBlob = blob; // approved before approvals were tied to content
       } else if (file.approvedBlob !== blob) {
         file.status = 'in-progress';
-        file.approvedBefore = file.approvedBlob;
+        file.approvedBefore = file.approvedBlob.startsWith('hunks:') ? undefined : file.approvedBlob;
         file.approvedBlob = undefined;
         file.changedSinceApproval = true;
         outcome.unapproved.push(file.path);
@@ -442,6 +513,76 @@ export class ReviewModel {
     }
     this.finishIfDone();
     return outcome;
+  }
+
+  /**
+   * Splits a file's current blocks of changes among its parts: each part keeps the ones it holds; a
+   * block that changed goes to the part that held the block it replaced (where it was), and the rest
+   * to the main part (Unassigned when there is none). Parts left with nothing go away; a lone part is
+   * the whole file again. A part's approval holds while its blocks stay the same.
+   */
+  private settleParts(entries: ReviewFile[], hunks: Hunk[], outcome: SyncOutcome): ReviewFile[] {
+    const keys = new Set(hunks.map((h) => h.key));
+    const owner = new Map<string, ReviewFile>();
+    const vanished: Array<{ file: ReviewFile; ref: HunkRef }> = [];
+    for (const file of entries) {
+      for (const ref of file.hunks ?? []) {
+        if (keys.has(ref.key) && !owner.has(ref.key)) {
+          owner.set(ref.key, file);
+        } else {
+          vanished.push({ file, ref });
+        }
+      }
+    }
+    for (const hunk of hunks) {
+      if (owner.has(hunk.key)) {
+        continue;
+      }
+      const end = hunk.newStart + Math.max(hunk.newLines, 1) - 1;
+      const near = vanished.find(({ ref }) => ref.start <= end + 1 && hunk.newStart <= ref.start + Math.max(ref.lines, 1));
+      if (near) {
+        owner.set(hunk.key, near.file);
+      }
+    }
+    let main = entries.find((f) => !f.hunks);
+    const unowned = hunks.filter((h) => !owner.has(h.key));
+    if (unowned.length > 0 && !main) {
+      main = { ...entries[0], commitId: null, status: 'todo', hunks: undefined, part: undefined, approvedBlob: undefined };
+      delete main.changedSinceApproval;
+      delete main.approvedBefore;
+      delete main.changedInIteration;
+      entries = [...entries, main];
+    }
+    const own = (file: ReviewFile) => hunks.filter((h) => (owner.get(h.key) ?? main) === file);
+    const parts = entries.filter((f) => own(f).length > 0);
+    if (parts.length === 1) {
+      const [whole] = parts;
+      whole.hunks = undefined;
+      whole.part = undefined;
+      return parts;
+    }
+    for (const file of parts) {
+      const mine = own(file);
+      if (file.hunks) {
+        file.hunks = mine.map((h) => ({ key: h.key, start: h.newStart, lines: h.newLines }));
+      }
+      file.part = { own: mine.length, total: hunks.length };
+      file.adds = mine.reduce((sum, h) => sum + h.added.length, 0);
+      file.dels = mine.reduce((sum, h) => sum + h.removed.length, 0);
+      if (file.status !== 'done' || !file.commitId) {
+        continue;
+      }
+      const signature = hunkSignature(mine.map((h) => h.key));
+      if (file.approvedBlob === undefined || !file.approvedBlob.startsWith('hunks:')) {
+        file.approvedBlob = signature;
+      } else if (file.approvedBlob !== signature) {
+        file.status = 'in-progress';
+        file.approvedBlob = undefined;
+        file.changedSinceApproval = true;
+        outcome.unapproved.push(file.path);
+      }
+    }
+    return parts;
   }
 
   /** Paths of files that left the working tree's changes while their commit isn't known as committed. */
@@ -570,14 +711,36 @@ export class ReviewModel {
       commit.dependsOn = dependsOn.length > 0 ? dependsOn : undefined;
       placed.push(commit);
       for (const filePath of input.files) {
-        const file = this.findFile(filePath);
-        if (file && file.commitId !== commit.id) {
+        const entries = this.pendingEntries(filePath);
+        const file = entries.find((f) => f.commitId === commit.id) ?? entries[0];
+        if (!file) {
+          continue;
+        }
+        // A plan places whole files: a split file is one again.
+        for (const other of entries.filter((f) => f !== file)) {
+          this.state.files.splice(this.state.files.indexOf(other), 1);
+        }
+        file.hunks = undefined;
+        file.part = undefined;
+        if (file.commitId !== commit.id || entries.length > 1) {
           file.commitId = commit.id;
           // A file that changes commit is reviewed again in its new one.
           this.clearReview(file);
         }
       }
     });
+    // Parts of split files left out of the plan that ended up together (both Unassigned) join.
+    for (const filePath of this.splitPaths()) {
+      const entries = this.pendingEntries(filePath);
+      for (const file of entries) {
+        const twin = entries.find((f) => f !== file && f.commitId === file.commitId && this.state.files.includes(f));
+        if (twin && this.state.files.includes(file)) {
+          twin.hunks = twin.hunks && file.hunks ? [...twin.hunks, ...file.hunks] : undefined;
+          this.state.files.splice(this.state.files.indexOf(file), 1);
+        }
+      }
+      this.settleSplit(filePath);
+    }
     for (const file of this.state.files) {
       if (!file.commitId && file.status !== 'todo') {
         this.clearReview(file);
@@ -683,9 +846,10 @@ export class ReviewModel {
 
   deleteCommit(commitId: string): void {
     this.editableCommit(commitId);
-    for (const file of this.filesOf(commitId)) {
-      file.commitId = null;
-    }
+    this.moveFiles(
+      this.filesOf(commitId).map((f) => ({ path: f.path, commitId })),
+      null,
+    );
     this.forgetCommit(commitId);
     if (this.state.session.currentCommitId === commitId) {
       this.state.session.currentCommitId = null;
@@ -727,20 +891,114 @@ export class ReviewModel {
     commit.dependsOn = dependsOn.length > 0 ? dependsOn : undefined;
   }
 
-  moveFiles(paths: string[], commitId: string | null): void {
+  /**
+   * Moves files to a commit (or Unassigned). A path moves the whole file, joining the parts of a
+   * split file; a reference with a commit moves only the file's part in that commit, which joins the
+   * file's part already in the target, if any.
+   */
+  moveFiles(refs: Array<string | FileRef>, commitId: string | null): void {
     if (commitId) {
       this.editableCommit(commitId);
     }
-    for (const filePath of paths) {
-      const file = this.findFile(filePath);
-      if (!file || this.isCommittedFile(file)) {
+    for (const ref of refs) {
+      const filePath = typeof ref === 'string' ? ref : ref.path;
+      const entries = this.pendingEntries(filePath);
+      const moving =
+        typeof ref === 'string' || ref.commitId === undefined ? entries : entries.filter((f) => f.commitId === ref.commitId);
+      if (moving.length === 0 || (moving.length === 1 && moving[0].commitId === commitId)) {
         continue;
       }
-      file.commitId = commitId;
-      if (!commitId) {
-        // Unassigned files aren't reviewed: they start over once they join a commit.
-        this.clearReview(file);
+      const target = entries.find((f) => f.commitId === commitId);
+      if (target) {
+        // Joining parts: what the target holds now is new to review.
+        for (const file of moving.filter((f) => f !== target)) {
+          target.hunks = target.hunks && file.hunks ? [...target.hunks, ...file.hunks] : undefined;
+          this.state.files.splice(this.state.files.indexOf(file), 1);
+        }
+        this.reopen(target);
+      } else {
+        const [first, ...rest] = moving;
+        first.commitId = commitId;
+        for (const file of rest) {
+          first.hunks = first.hunks && file.hunks ? [...first.hunks, ...file.hunks] : undefined;
+          this.state.files.splice(this.state.files.indexOf(file), 1);
+        }
+        if (!commitId) {
+          // Unassigned files aren't reviewed: they start over once they join a commit.
+          this.clearReview(first);
+        } else if (rest.length > 0) {
+          this.reopen(first);
+        }
       }
+      this.settleSplit(filePath);
+    }
+  }
+
+  /**
+   * Moves some blocks of a file's changes (`keys`, out of the file's current `hunks`) from its part
+   * in `from` to its part in `to`, making that part when there is none: the file is then split
+   * across both commits. Both parts are reviewed again.
+   */
+  moveHunks(filePath: string, from: string | null, keys: string[], to: string | null, hunks: Hunk[]): void {
+    if (to) {
+      this.editableCommit(to);
+    }
+    const source = this.findFile(filePath, from);
+    if (!source || this.isCommittedFile(source)) {
+      throw new Error(`${filePath} is not a pending file in this review.`);
+    }
+    if (source.binary || source.changeType !== 'modified') {
+      throw new Error(`Only changes to an existing text file can be split; ${filePath} is ${source.binary ? 'binary' : source.changeType}.`);
+    }
+    const own = new Set(this.ownKeys(source, hunks.map((h) => h.key)));
+    const moving = hunks.filter((h) => own.has(h.key) && keys.includes(h.key));
+    if (moving.length === 0 || from === to) {
+      return;
+    }
+    if (moving.length === own.size) {
+      this.moveFiles([{ path: filePath, commitId: from }], to);
+      return;
+    }
+    const refs = moving.map((h) => ({ key: h.key, start: h.newStart, lines: h.newLines }));
+    const movingKeys = new Set(refs.map((r) => r.key));
+    if (source.hunks) {
+      source.hunks = source.hunks.filter((h) => !movingKeys.has(h.key));
+    }
+    let target = this.pendingEntries(filePath).find((f) => f.commitId === to);
+    if (target?.hunks) {
+      target.hunks.push(...refs);
+    } else if (target && !source.hunks) {
+      // Both would hold "the rest": the source holds what it keeps by name instead.
+      source.hunks = hunks.filter((h) => own.has(h.key) && !movingKeys.has(h.key)).map((h) => ({ key: h.key, start: h.newStart, lines: h.newLines }));
+    } else if (!target) {
+      target = { ...source, commitId: to, status: 'todo', hunks: refs, part: undefined, approvedBlob: undefined };
+      delete target.changedSinceApproval;
+      delete target.approvedBefore;
+      delete target.changedInIteration;
+      this.state.files.push(target);
+    }
+    this.reopen(source);
+    if (target) {
+      this.reopen(target);
+    }
+  }
+
+  /** An entry whose content to review changed: an approval no longer covers it. */
+  private reopen(file: ReviewFile): void {
+    if (!file.commitId) {
+      this.clearReview(file);
+    } else if (file.status === 'done') {
+      file.status = 'in-progress';
+      file.approvedBlob = undefined;
+    }
+  }
+
+  /** A split file left with one part is whole again. */
+  private settleSplit(filePath: string): void {
+    const entries = this.pendingEntries(filePath);
+    if (entries.length === 1) {
+      entries[0].hunks = undefined;
+      entries[0].part = undefined;
     }
   }
 
@@ -764,10 +1022,13 @@ export class ReviewModel {
     this.threadsRevision++;
   }
 
-  /** `blobs`: content ids of the files now, so an approval covers exactly this content. */
-  setStatus(paths: string[], status: FileStatus, blobs?: Map<string, string>): void {
-    for (const filePath of paths) {
-      const file = this.findFile(filePath);
+  /**
+   * `approvals`: what an approval covers now, by path (content id), or by path and commit for
+   * parts of split files (see approvalKey), so an approval covers exactly this content.
+   */
+  setStatus(refs: Array<string | FileRef>, status: FileStatus, approvals?: Map<string, string>): void {
+    for (const ref of refs) {
+      const file = this.resolve(ref);
       // Files are reviewed as part of a commit; unassigned ones have no status.
       if (!file || !file.commitId || this.isCommittedFile(file)) {
         continue;
@@ -775,7 +1036,7 @@ export class ReviewModel {
       file.status = status;
       file.changedSinceApproval = undefined;
       file.approvedBefore = undefined;
-      file.approvedBlob = status === 'done' ? blobs?.get(filePath) : undefined;
+      file.approvedBlob = status === 'done' ? (approvals?.get(approvalKey(file)) ?? approvals?.get(file.path)) : undefined;
       if (status === 'done') {
         file.changedInIteration = undefined;
       }
@@ -783,8 +1044,8 @@ export class ReviewModel {
   }
 
   /** Opening a file to review moves it from to do to in progress. */
-  markOpened(filePath: string): boolean {
-    const file = this.findFile(filePath);
+  markOpened(filePath: string, commitId?: string | null): boolean {
+    const file = this.findFile(filePath, commitId);
     if (!file || !file.commitId || file.status !== 'todo' || this.isCommittedFile(file)) {
       return false;
     }
@@ -816,7 +1077,8 @@ export class ReviewModel {
         continue;
       }
       file.changedInIteration = iteration;
-      if (file.status === 'done') {
+      // A part of a split file stays approved while its own changes are the same (see sync).
+      if (file.status === 'done' && !this.isSplit(file.path)) {
         file.status = 'in-progress';
         file.approvedBlob = undefined;
         reset.push(file.path);
@@ -850,7 +1112,33 @@ export class ReviewModel {
     return next;
   }
 
-  // ---- comment threads ----
+  /**
+   * Files (or parts of split files) amended into a committed commit: they become part of its
+   * history, joining the commit's own entry for the same file.
+   */
+  absorb(files: ReviewFile[], commitId: string): void {
+    const commit = this.getCommit(commitId);
+    if (commit.status !== 'committed') {
+      throw new Error(`"${subjectOf(commit)}" is not committed.`);
+    }
+    for (const file of files) {
+      const existing = this.state.files.find((f) => f.path === file.path && f.commitId === commitId);
+      if (existing) {
+        this.state.files.splice(this.state.files.indexOf(file), 1);
+        continue;
+      }
+      file.commitId = commitId;
+      file.status = 'done';
+      file.hunks = undefined;
+      file.part = undefined;
+    }
+    for (const filePath of new Set(files.map((f) => f.path))) {
+      this.settleSplit(filePath);
+    }
+    this.threadsRevision++;
+  }
+
+  // ---- comment threads ----  // ---- comment threads ----
 
   getThread(threadId: string): ReviewThread {
     const thread = this.state.threads.find((t) => t.id === threadId);
@@ -1072,9 +1360,59 @@ export class ReviewModel {
   }
 }
 
+/** Key of a file's part in its commit, for approvals of parts of split files. */
+export function approvalKey(file: { path: string; commitId: string | null }): string {
+  return `${file.commitId ?? ''}\0${file.path}`;
+}
+
 /** First line of the commit message. */
 export function subjectOf(commit: PlanCommit): string {
   return commit.message.split('\n')[0].trim();
+}
+
+/**
+ * Merges entries of one path that ended up in the same commit (or both Unassigned). Of two main
+ * parts (a commit came back while the path had a new entry), the one in a commit stays.
+ */
+function mergeDuplicates(entries: ReviewFile[]): ReviewFile[] {
+  const mains = entries.filter((f) => !f.hunks);
+  if (mains.length > 1) {
+    const keep = mains.find((f) => f.commitId) ?? mains[0];
+    entries = entries.filter((f) => f.hunks || f === keep);
+  }
+  const byCommit = new Map<string | null, ReviewFile>();
+  for (const file of entries) {
+    const into = byCommit.get(file.commitId);
+    if (!into) {
+      byCommit.set(file.commitId, file);
+      continue;
+    }
+    into.hunks = into.hunks && file.hunks ? [...into.hunks, ...file.hunks] : undefined;
+    if (into.status === 'done') {
+      into.status = 'in-progress';
+      into.approvedBlob = undefined;
+    }
+  }
+  return [...byCommit.values()];
+}
+
+/**
+ * A file that can't be split (any more): one entry, the one in a commit when there is a choice. Its
+ * blocks of changes come back to it.
+ */
+function collapse(entries: ReviewFile[]): ReviewFile[] {
+  if (entries.length === 1 && !entries[0].hunks) {
+    entries[0].part = undefined;
+    return entries;
+  }
+  const whole = entries.find((f) => f.commitId && !f.hunks) ?? entries.find((f) => f.commitId) ?? entries[0];
+  whole.hunks = undefined;
+  whole.part = undefined;
+  if (entries.length > 1 && whole.status === 'done') {
+    whole.status = 'in-progress';
+    whole.approvedBlob = undefined;
+  }
+  return [whole];
 }
 
 function newFile(change: FileChange): ReviewFile {

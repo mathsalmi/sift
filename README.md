@@ -134,7 +134,7 @@ Sift also picks up `.sift/plan.json` whenever it is written, by hand or by anoth
 | Send a comment (Ask AI) | Cmd+Enter | Ctrl+Enter |
 | Open the Sift view (also when the sidebar is hidden) | Ctrl+Shift+S | Ctrl+Alt+S |
 
-Diff editor buttons: Ask AI · Previous / next file in the commit · Approve / unapprove file · Compare with (previous version, last commit, or a specific version); and in its **…** menu: Next to do · Show / hide AI explanations.
+Diff editor buttons: Ask AI · Previous / next file in the commit · Approve / unapprove file · Compare with (previous version, last commit, or a specific version) · Show / hide AI explanations (💡); and in its **…** menu: Next to do.
 
 Right-click a commit for: Approve and commit · Review this commit · Edit message · Move up / down · Delete. Right-click a file for: Approve / unapprove · Mark in progress / to do · Add to .gitignore · Exclude locally (.git/info/exclude) · Move to commit… (lists the other commits, Unassigned and **New commit…**; with no other commit it goes straight to naming a new one). Right-click a locally excluded file for: Remove from .git/info/exclude. Right-click an editor tab of a review file for **Sift**: Show in Sift sidebar · Approve / unapprove · Mark in progress · Mark to do · Add to .gitignore · Exclude locally · Move to commit….
 

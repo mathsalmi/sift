@@ -620,11 +620,6 @@
           "group": "z@1"
         },
         {
-          "command": "sift.toggleExplanations",
-          "when": "view == sift.plan && sift.active",
-          "group": "navigation@6"
-        },
-        {
           "command": "sift.groupByStatus",
           "when": "view == sift.plan && sift.active && !sift.groupByStatus",
           "group": "navigation@7"
@@ -836,7 +831,7 @@
         {
           "command": "sift.toggleExplanations",
           "when": "sift.active && isInDiffEditor",
-          "group": "sift@3"
+          "group": "navigation@5"
         },
         {
           "submenu": "sift.compareWith",

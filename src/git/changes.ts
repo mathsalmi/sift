@@ -81,21 +81,161 @@ export async function operationInProgress(git: GitRunner): Promise<string | null
   return null;
 }
 
+/** What to stage for a file: all of it, or only `content` (part of its changes, see git/hunks.ts). */
+export interface StageEntry {
+  path: string;
+  content?: string;
+}
+
 /**
- * Stages exactly the given paths (including deletions) and commits them
- * with the user's own git identity and hooks. Returns the new HEAD sha.
+ * Stages the entries: whole files as they are in the working tree (including deletions), parts of
+ * files as the given content. The index must be empty.
  */
-export async function commitPaths(git: GitRunner, paths: string[], message: string): Promise<string> {
-  if (paths.length === 0) {
+export async function stageEntries(git: GitRunner, entries: StageEntry[]): Promise<void> {
+  if (entries.length === 0) {
     throw new Error('Nothing to commit: the commit has no files.');
   }
   if (await hasStagedChanges(git)) {
-    throw new Error('The index already has staged changes. Unstage them before approving a commit.');
+    throw new Error('The index already has staged changes. Unstage them first (git restore --staged .).');
   }
+  const whole = entries.filter((e) => e.content === undefined).map((e) => e.path);
+  if (whole.length > 0) {
+    await git.run(['add', '-A', '--pathspec-from-file=-', '--pathspec-file-nul'], { input: whole.join('\0') + '\0' });
+  }
+  for (const entry of entries.filter((e) => e.content !== undefined)) {
+    const sha = (await git.run(['hash-object', '-w', '--stdin', '--no-filters'], { input: entry.content })).trim();
+    const mode = (await git.run(['ls-tree', 'HEAD', '--', `:(literal)${entry.path}`])).split(' ')[0] || '100644';
+    await git.run(['update-index', '--add', '--cacheinfo', `${mode},${sha},${entry.path}`]);
+  }
+}
 
-  await git.run(['add', '-A', '--pathspec-from-file=-', '--pathspec-file-nul'], { input: paths.join('\0') + '\0' });
-  await git.run(['commit', '-m', message]);
+/**
+ * Commits exactly the given entries with the user's own git identity and hooks. Returns the new
+ * HEAD sha. Whatever was staged is unstaged again when the commit fails.
+ */
+export async function commitEntries(git: GitRunner, entries: StageEntry[], message: string): Promise<string> {
+  await stageEntries(git, entries);
+  try {
+    await git.run(['commit', '-m', message]);
+  } catch (error) {
+    await git.exec(['reset', '-q'], { okCodes: [0, 1, 128] });
+    throw error;
+  }
   return currentHead(git);
+}
+
+/** Stages exactly the given paths (including deletions) and commits them. Returns the new HEAD sha. */
+export async function commitPaths(git: GitRunner, paths: string[], message: string): Promise<string> {
+  return commitEntries(
+    git,
+    paths.map((p) => ({ path: p })),
+    message,
+  );
+}
+
+/**
+ * Throws away uncommitted changes: files go back to HEAD, new files are deleted, and parts of files
+ * get `content` (the file without the discarded changes).
+ */
+export async function discardEntries(
+  git: GitRunner,
+  entries: Array<{ path: string; changeType: ChangeType; content?: string }>,
+): Promise<void> {
+  for (const entry of entries) {
+    const full = path.join(git.cwd, ...entry.path.split('/'));
+    if (entry.content !== undefined) {
+      await fs.writeFile(full, entry.content, 'utf8');
+    } else if (entry.changeType === 'added') {
+      await git.exec(['rm', '-q', '-f', '--cached', '--ignore-unmatch', '--', `:(literal)${entry.path}`], { okCodes: [0, 128] });
+      await fs.rm(full, { force: true, recursive: true });
+    } else {
+      await git.run(['restore', '--source=HEAD', '--staged', '--worktree', '--', `:(literal)${entry.path}`]);
+    }
+  }
+}
+
+/**
+ * Folds the entries into `target`, a commit in HEAD's history that wasn't pushed: amends HEAD, or
+ * for an older commit makes a fixup commit and squashes it in with a rebase (keeping other
+ * uncommitted changes aside meanwhile). Returns old sha → new sha for every commit it rewrote.
+ * On a conflict nothing changes and it throws.
+ */
+export async function amendInto(git: GitRunner, target: string, entries: StageEntry[]): Promise<Map<string, string>> {
+  const head = await currentHead(git);
+  if (target !== head) {
+    const parent = await git.exec(['rev-parse', '--verify', '--quiet', `${target}~1`], { okCodes: [0, 1, 128] });
+    if (parent.exitCode !== 0) {
+      throw new Error("The repository's first commit can only be amended while it is the last one.");
+    }
+    if ((await git.run(['rev-list', '--merges', `${target}..${head}`])).trim()) {
+      throw new Error('There are merge commits after it, so Sift won\'t rewrite that history. Amend into a later commit instead.');
+    }
+  }
+  const before = target === head ? [head] : await ancestry(git, target, head);
+  await stageEntries(git, entries);
+  try {
+    if (target === head) {
+      await git.run(['commit', '--amend', '--no-edit']);
+    } else {
+      await git.run(['commit', '--no-verify', `--fixup=${target}`]);
+    }
+  } catch (error) {
+    await git.exec(['reset', '-q'], { okCodes: [0, 1, 128] });
+    throw error;
+  }
+  if (target !== head) {
+    const parent = `${target}~1`;
+    const rebase = await git.exec(['rebase', '-i', '--autosquash', '--autostash', '--quiet', parent], {
+      okCodes: [0, 1, 128],
+      env: { GIT_SEQUENCE_EDITOR: 'true', GIT_EDITOR: 'true' },
+    });
+    if (rebase.exitCode !== 0) {
+      await git.exec(['rebase', '--abort'], { okCodes: [0, 1, 128] });
+      // Back to before: drop the fixup commit, its changes return to the working tree.
+      await git.run(['reset', '-q', '--mixed', head]);
+      throw new Error(
+        'The change conflicts with commits made after the target, so nothing was amended. Amend it into a later commit instead.',
+      );
+    }
+  }
+  const after = target === head ? [await currentHead(git)] : await ancestry(git, target, 'HEAD');
+  const rewritten = new Map<string, string>();
+  before.forEach((sha, i) => {
+    if (after[i] && after[i] !== sha) {
+      rewritten.set(sha, after[i]);
+    }
+  });
+  return rewritten;
+}
+
+/** `from` and the commits after it up to `to`, oldest first. */
+async function ancestry(git: GitRunner, from: string, to: string): Promise<string[]> {
+  const out = await git.run(['rev-list', '--reverse', '--first-parent', `${from}~1..${to}`]);
+  return out.split('\n').filter(Boolean);
+}
+
+/** The branch HEAD is on, its upstream, and how far apart they are (from the last fetch). */
+export interface BranchStatus {
+  /** null when HEAD is detached. */
+  branch: string | null;
+  upstream: string | null;
+  ahead: number;
+  behind: number;
+}
+
+export async function branchStatus(git: GitRunner): Promise<BranchStatus> {
+  const name = (await git.exec(['symbolic-ref', '--quiet', '--short', 'HEAD'], { okCodes: [0, 1, 128] })).stdout.trim();
+  const branch = name || null;
+  const upstreamResult = await git.exec(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'], {
+    okCodes: [0, 128],
+  });
+  const upstream = branch && upstreamResult.exitCode === 0 ? upstreamResult.stdout.trim() || null : null;
+  if (!upstream) {
+    return { branch, upstream: null, ahead: 0, behind: 0 };
+  }
+  const counts = await git.exec(['rev-list', '--left-right', '--count', 'HEAD...@{upstream}'], { okCodes: [0, 128] });
+  const [ahead, behind] = counts.stdout.trim().split(/\s+/).map(Number);
+  return { branch, upstream, ahead: ahead || 0, behind: behind || 0 };
 }
 
 /** The files a commit changed compared with its first parent (or with nothing, for a root commit). */

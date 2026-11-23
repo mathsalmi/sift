@@ -299,10 +299,11 @@ export class CommentsManager implements vscode.Disposable {
     vsThread.state =
       thread.status === 'resolved' ? vscode.CommentThreadState.Resolved : vscode.CommentThreadState.Unresolved;
     // Only open or close the thread when it appears or gets (un)resolved, never while the user is in it.
+    // Explanations show open in the diff too while they are shown (the lightbulb toggle hides them all).
     const wasResolved = this.renderedStatus.get(thread.id) === 'resolved';
     if (isNew || wasResolved !== (thread.status === 'resolved')) {
       vsThread.collapsibleState =
-        thread.kind === 'explanation' || thread.status === 'resolved'
+        thread.status === 'resolved'
           ? vscode.CommentThreadCollapsibleState.Collapsed
           : vscode.CommentThreadCollapsibleState.Expanded;
     }

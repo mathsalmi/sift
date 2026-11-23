@@ -8,7 +8,7 @@ When an AI (or you) changes hundreds of files in one go, reviewing a single gian
 
 ## Features
 
-- **AI commit plan:** one click groups every changed file into ordered, atomic commits, with an intent, risk notes and explanations on the lines that matter. Drag files between commits to adjust.
+- **AI commit plan:** one click groups every changed file into ordered, atomic commits, with an intent, risk notes and explanations on the lines that matter. Explanations show open on their lines in the diff; **Show / hide AI explanations** in the diff's Sift menu turns them all off and on. Drag files between commits to adjust.
 - **Ask about any line:** in a comment, ask a question (the AI answers in the thread) or give a direction (the AI edits the code and says what it changed). Markdown works, **Cmd+Enter** sends, and the thread shows *Thinking…* while the AI works. Edit or delete your own comments. Your comments show your GitHub picture once you allow Sift to use VS Code's GitHub account (Accounts menu).
 - **Your choice of AI:** a command line AI (Claude Code, Codex, Gemini CLI) with your own login, any model VS Code offers (GitHub Copilot's GPT, Claude, Gemini, Grok… or other extensions'), or any command you like.
 - **Versions per file:** Sift freezes your files in a snapshot when a commit's review starts and after each AI edit, and every file gets its own version numbers: a file goes from v0 to v1 only when a round changed it, so an untouched file stays at v0 while another reaches v7. You can diff:
@@ -166,7 +166,7 @@ Also in the Sift view and command palette: Plan commits with AI · Choose AI · 
 - **State:** `.sift/state.json` holds only your decisions: the plan, file assignments, approvals, comments. What git knows is read from git every time and never saved: which files changed and how, and which planned commits are committed. Each commit Sift makes is recorded in `refs/sift/<session>/<commit>/commit`; nothing is added to commit messages.
 - **Commits made outside Sift** (terminal, Source Control view, rebase, squash) are picked up as they happen, and when VS Code starts. A planned commit whose files no longer differ from HEAD is committed, linked to the newest commit that touched them; if no commit touched them they were reverted and the commit leaves the plan. A commit that leaves HEAD's history (`git reset`) goes back to the plan. Commits you created empty are left alone.
 - **Approvals** cover the file's content when you approved it. Edit the file afterwards and it goes back to In progress ("changed since approval"), so a commit never includes code you didn't see. Its diff then shows only what changed since you approved it; Sift keeps the approved content in git under `refs/sift/<session>/approved/`.
-- **Approve and commit:** catches up with git first, then refuses if the index already has staged changes.
+- **Approve and commit:** catches up with git first. Files you staged yourself show up in the plan like any other change (in Unassigned when new); a commit takes exactly its own files, so anything else you staged stays staged.
 - **Discard plan:** after a confirmation, deletes the review state and snapshot refs. Your files and commits are untouched.
 
 ## Limitations and roadmap

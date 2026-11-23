@@ -14,7 +14,6 @@ import {
   currentHead,
   discardEntries,
   fileDiff,
-  hasStagedChanges,
   listChanges,
   operationInProgress,
   type BranchStatus,
@@ -129,9 +128,6 @@ export class ReviewController implements vscode.Disposable {
     const operation = await operationInProgress(this.git);
     if (operation) {
       throw new Error(`Finish ${operation} before starting a review.`);
-    }
-    if (await hasStagedChanges(this.git)) {
-      throw new Error('The index has staged changes. Unstage them (git restore --staged .) before starting.');
     }
     const head = await currentHead(this.git);
     const changes = await listChanges(this.git);
@@ -601,9 +597,6 @@ export class ReviewController implements vscode.Disposable {
     const operation = await operationInProgress(this.git);
     if (operation) {
       throw new Error(`Finish ${operation} first.`);
-    }
-    if (await hasStagedChanges(this.git)) {
-      throw new Error('The index has staged changes. Unstage them (git restore --staged .) first.');
     }
     const kept = model.dependentsOf(commitId).filter((c) => c.status === 'committed' && !c.revertedBy);
     if (kept.length > 0) {

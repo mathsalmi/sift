@@ -88,39 +88,54 @@ export interface StageEntry {
 }
 
 /**
- * Stages the entries: whole files as they are in the working tree (including deletions), parts of
- * files as the given content. The index must be empty.
+ * Stages the entries in the index `env` points to: whole files as they are in the working tree
+ * (including deletions), parts of files as the given content.
  */
-export async function stageEntries(git: GitRunner, entries: StageEntry[]): Promise<void> {
-  if (entries.length === 0) {
-    throw new Error('Nothing to commit: the commit has no files.');
-  }
-  if (await hasStagedChanges(git)) {
-    throw new Error('The index already has staged changes. Unstage them first (git restore --staged .).');
-  }
+async function stageEntries(git: GitRunner, entries: StageEntry[], env: NodeJS.ProcessEnv): Promise<void> {
   const whole = entries.filter((e) => e.content === undefined).map((e) => e.path);
   if (whole.length > 0) {
-    await git.run(['add', '-A', '--pathspec-from-file=-', '--pathspec-file-nul'], { input: whole.join('\0') + '\0' });
+    await git.run(['add', '-A', '--pathspec-from-file=-', '--pathspec-file-nul'], { input: whole.join('\0') + '\0', env });
   }
   for (const entry of entries.filter((e) => e.content !== undefined)) {
     const sha = (await git.run(['hash-object', '-w', '--stdin', '--no-filters'], { input: entry.content })).trim();
     const mode = (await git.run(['ls-tree', 'HEAD', '--', `:(literal)${entry.path}`])).split(' ')[0] || '100644';
-    await git.run(['update-index', '--add', '--cacheinfo', `${mode},${sha},${entry.path}`]);
+    await git.run(['update-index', '--add', '--cacheinfo', `${mode},${sha},${entry.path}`], { env });
   }
 }
 
 /**
- * Commits exactly the given entries with the user's own git identity and hooks. Returns the new
- * HEAD sha. Whatever was staged is unstaged again when the commit fails.
+ * Runs a commit command on exactly the entries: they are staged in a private index (HEAD plus the
+ * entries), so whatever the user staged in the real index stays out of the commit and stays staged.
+ * Afterwards the real index takes the committed paths as HEAD now has them.
+ */
+async function commitWith(git: GitRunner, entries: StageEntry[], args: string[]): Promise<void> {
+  if (entries.length === 0) {
+    throw new Error('Nothing to commit: the commit has no files.');
+  }
+  const indexFile = path.resolve(git.cwd, (await git.run(['rev-parse', '--git-path', 'sift/commit-index'])).trim());
+  await fs.mkdir(path.dirname(indexFile), { recursive: true });
+  const env = { GIT_INDEX_FILE: indexFile };
+  try {
+    await git.run(['read-tree', 'HEAD'], { env });
+    await stageEntries(git, entries, env);
+    await git.run(args, { env });
+  } finally {
+    await fs.rm(indexFile, { force: true });
+  }
+  await syncIndex(git, entries.map((e) => e.path));
+}
+
+/** Sets the real index entries of these paths to HEAD's. */
+async function syncIndex(git: GitRunner, paths: string[]): Promise<void> {
+  await git.run(['reset', '-q', '--pathspec-from-file=-', '--pathspec-file-nul'], { input: paths.join('\0') + '\0' });
+}
+
+/**
+ * Commits exactly the given entries with the user's own git identity and hooks, leaving anything
+ * else the user staged staged. Returns the new HEAD sha.
  */
 export async function commitEntries(git: GitRunner, entries: StageEntry[], message: string): Promise<string> {
-  await stageEntries(git, entries);
-  try {
-    await git.run(['commit', '-m', message]);
-  } catch (error) {
-    await git.exec(['reset', '-q'], { okCodes: [0, 1, 128] });
-    throw error;
-  }
+  await commitWith(git, entries, ['commit', '-m', message]);
   return currentHead(git);
 }
 
@@ -157,7 +172,8 @@ export async function discardEntries(
 /**
  * Folds the entries into `target`, a commit in HEAD's history that wasn't pushed: amends HEAD, or
  * for an older commit makes a fixup commit and squashes it in with a rebase (keeping other
- * uncommitted changes aside meanwhile). Returns old sha → new sha for every commit it rewrote.
+ * uncommitted changes aside meanwhile; what was staged comes back unstaged). Returns old sha → new
+ * sha for every commit it rewrote.
  * On a conflict nothing changes and it throws.
  */
 export async function amendInto(git: GitRunner, target: string, entries: StageEntry[]): Promise<Map<string, string>> {
@@ -172,17 +188,7 @@ export async function amendInto(git: GitRunner, target: string, entries: StageEn
     }
   }
   const before = target === head ? [head] : await ancestry(git, target, head);
-  await stageEntries(git, entries);
-  try {
-    if (target === head) {
-      await git.run(['commit', '--amend', '--no-edit']);
-    } else {
-      await git.run(['commit', '--no-verify', `--fixup=${target}`]);
-    }
-  } catch (error) {
-    await git.exec(['reset', '-q'], { okCodes: [0, 1, 128] });
-    throw error;
-  }
+  await commitWith(git, entries, target === head ? ['commit', '--amend', '--no-edit'] : ['commit', '--no-verify', `--fixup=${target}`]);
   if (target !== head) {
     const parent = `${target}~1`;
     const rebase = await git.exec(['rebase', '-i', '--autosquash', '--autostash', '--quiet', parent], {
@@ -191,8 +197,10 @@ export async function amendInto(git: GitRunner, target: string, entries: StageEn
     });
     if (rebase.exitCode !== 0) {
       await git.exec(['rebase', '--abort'], { okCodes: [0, 1, 128] });
-      // Back to before: drop the fixup commit, its changes return to the working tree.
-      await git.run(['reset', '-q', '--mixed', head]);
+      // Back to before: drop the fixup commit (its changes are still in the working tree) and put
+      // those paths back in the index as they were, leaving what the user staged alone.
+      await git.run(['reset', '-q', '--soft', head]);
+      await syncIndex(git, entries.map((e) => e.path));
       throw new Error(
         'The change conflicts with commits made after the target, so nothing was amended. Amend it into a later commit instead.',
       );

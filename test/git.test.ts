@@ -111,10 +111,16 @@ describe('commitPaths', () => {
     expect(repo.git('status', '--porcelain')).toBe(' M src/a.ts\n');
   });
 
-  it('refuses when the index already has staged changes', async () => {
-    repo.write('src/a.ts', 'changed\n');
-    repo.git('add', 'src/a.ts');
+  it('commits only the given files and leaves what the user staged staged', async () => {
+    repo.write('src/a.ts', 'staged\n');
+    repo.write('src/new.ts', 'new\n');
+    repo.git('add', 'src/a.ts', 'src/new.ts');
+    repo.write('src/b.ts', 'b changed\n');
+    repo.git('add', 'src/b.ts');
 
-    await expect(commitPaths(git, ['src/a.ts'], 'msg')).rejects.toThrow(/already has staged changes/);
+    await commitPaths(git, ['src/b.ts'], 'b');
+
+    expect(repo.git('show', '--name-only', '--format=', 'HEAD')).toBe('src/b.ts\n');
+    expect(repo.git('status', '--porcelain')).toBe('M  src/a.ts\nA  src/new.ts\n');
   });
 });

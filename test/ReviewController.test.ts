@@ -327,6 +327,28 @@ describe('ReviewController end to end', () => {
   });
 });
 
+describe('staged changes', () => {
+  it('lists files the user staged like any other change, and keeps them staged', async () => {
+    repo.write('src/a.ts', 'a staged\n');
+    repo.write('src/new.ts', 'new\n');
+    repo.git('add', 'src/a.ts', 'src/new.ts');
+    repo.write('src/b.ts', 'b changed\n');
+
+    await controller.startReview();
+    expect(controller.review!.filesOf(null).map((f) => [f.path, f.changeType])).toEqual([
+      ['src/a.ts', 'modified'],
+      ['src/b.ts', 'modified'],
+      ['src/new.ts', 'added'],
+    ]);
+
+    await controller.setPlan({ commits: [{ message: 'B', files: ['src/b.ts'] }, { message: 'Rest', files: ['src/a.ts', 'src/new.ts'] }] });
+    const [b] = controller.review!.commitsInOrder();
+    await controller.commitCommits([b.id], { allowUnapproved: true });
+    expect(repo.git('show', '--name-only', '--format=', 'HEAD')).toBe('src/b.ts\n');
+    expect(repo.git('status', '--porcelain')).toBe('M  src/a.ts\nA  src/new.ts\n');
+  });
+});
+
 describe('plan file pickup', () => {
   it('starts a session and applies a new plan file without any click, once', async () => {
     repo.write('src/a.ts', 'a changed\n');

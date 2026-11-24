@@ -1286,6 +1286,25 @@
     "configuration": {
       "title": "Sift",
       "properties": {
+        "sift.agentSkills": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "claude",
+              "codex",
+              "gemini"
+            ],
+            "enumItemLabels": [
+              "Claude Code",
+              "Codex",
+              "Gemini CLI"
+            ]
+          },
+          "uniqueItems": true,
+          "scope": "application",
+          "markdownDescription": "Coding agents that get Sift's `sift` skill, so they know how to plan commits in Sift when you ask them to. Each gets it in its own folder only: `~/.claude/skills`, `~/.codex/skills` or `~/.gemini/skills`. Not set: only the agent chosen with **Choose AI** (`#sift.ai.provider#`). An empty list installs it nowhere. Sift removes its skill from agents you take off the list."
+        },
         "sift.stateLocation": {
           "type": "string",
           "enum": [

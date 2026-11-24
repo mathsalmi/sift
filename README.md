@@ -101,6 +101,15 @@ Sift also gives VS Code's chat agents, such as GitHub Copilot in agent mode, too
 
 For example: *"Split my changes into commits with Sift"*, or *"Answer my Sift comments"*. The agent never approves files or commits: that stays your click.
 
+## Coding agents
+
+Sift installs a `sift` skill for the coding agent you use, so asking it *"plan the commits in Sift"* or *"move the tests to their own commit in Sift"* works without explaining what Sift is: the agent reads the changes and the current plan, then writes `.sift/plan.json`.
+
+- By default only the agent chosen with **Choose AI** gets it (Claude Code, Codex or Gemini CLI). To pick others, list them in `sift.agentSkills` (`claude`, `codex`, `gemini`); an empty list installs it nowhere.
+- Each agent gets one file in its own skills folder only: `~/.claude/skills/sift`, `~/.codex/skills/sift` or `~/.gemini/skills/sift`. Nothing goes in your repositories, and an agent that isn't installed gets nothing.
+- Sift keeps the skill up to date and removes it from agents you take off the list. An agent installed later gets it the next time the VS Code window is focused. A `sift` skill you wrote yourself is never touched.
+- Copilot's agent mode uses Sift's own tools instead (see above).
+
 ## Plan file
 
 Sift also picks up `.sift/plan.json` whenever it is written, by hand or by another tool, applies it on its own and then deletes it: the plan lives in Sift from then on. With no session it starts one. The plan replaces the commits not committed yet, but a commit in the plan with the same message, or with most of the same files, stays the same commit: it keeps its review (file statuses, versions, comments) and takes the new message. Sift asks first only when the plan drops a commit you already started reviewing (Ignore deletes the file too). A plan Sift can't load (bad JSON, a file that isn't changed) stays, so it can be fixed.
@@ -155,6 +164,7 @@ Also in the Sift view and command palette: Plan commits with AI · Choose AI · 
 | `sift.ai.command` | empty | For `custom`: the command. For a command line AI: its path, when Sift can't find it |
 | `sift.ai.additionalDirectories` | `[]` | Folders outside the repo the AI may read, e.g. `~/code` for sibling worktrees (Claude Code, Gemini CLI) |
 | `sift.ai.extraArguments` | `[]` | Extra options for the command line AI, e.g. `--allowedTools=WebFetch` for Claude Code. Naming an MCP tool there loads your MCP servers, which makes calls slower |
+| `sift.agentSkills` | not set | Agents that get the `sift` skill: `claude`, `codex`, `gemini`. Not set: the one chosen with Choose AI (see [Coding agents](#coding-agents)) |
 | `sift.stateLocation` | `repo` | `repo`: `.sift/state.json`, excluded via `.git/info/exclude`. `workspaceStorage`: outside the repo. |
 | `sift.snapshotMaxFileSizeMB` | `5` | New files larger than this are left out of snapshots |
 

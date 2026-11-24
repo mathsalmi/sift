@@ -4,6 +4,7 @@ import { AiService } from './ai/AiService';
 import { chooseProvider, providerLabel, providerShortLabel, resolveProvider } from './ai/providers';
 import { migrateAiSettings } from './ai/settings';
 import { registerAgentTools } from './ai/agentTools';
+import { chosenAgents, syncAgentSkills } from './ai/agentSkill';
 import { ReviewController } from './controller/ReviewController';
 import type { FileRef, FileStatus, PlanCommit } from './core/types';
 import { GitRunner } from './git/GitRunner';
@@ -22,6 +23,25 @@ import { ViewOptions } from './ui/ViewOptions';
 type TreeNode = PlanNode;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
+  // Coding agents learn about Sift from a skill, so "plan the commits in Sift" just works there.
+  // Only the agents the user chose get it (by default the one picked in Choose AI).
+  const syncSkill = () =>
+    void syncAgentSkills(chosenAgents(...agentSkillsSettings())).catch(() => undefined);
+  syncSkill();
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((event) => {
+      if (event.affectsConfiguration('sift.agentSkills') || event.affectsConfiguration('sift.ai.provider')) {
+        syncSkill();
+      }
+    }),
+    // An agent installed after Sift gets the skill the next time the window is focused.
+    vscode.window.onDidChangeWindowState((state) => {
+      if (state.focused) {
+        syncSkill();
+      }
+    }),
+  );
+
   const folder = vscode.workspace.workspaceFolders?.[0];
   if (!folder) {
     return;
@@ -1420,4 +1440,15 @@ async function openNextTodo(controller: ReviewController, afterPath?: string, ot
       `Commit ${done.order} is approved; it isn't committed yet. Moved on to commit ${target.order}: ${target.message.split('\n')[0]}.`,
     );
   }
+}
+
+/**
+ * sift.agentSkills (undefined when not set: follow Choose AI) and the AI chosen for Sift. Skills are
+ * per machine, so only user settings count: windows with different workspace settings would
+ * otherwise keep adding and removing the skill.
+ */
+function agentSkillsSettings(): [unknown, string] {
+  const skills = vscode.workspace.getConfiguration('sift').inspect<string[]>('agentSkills')?.globalValue;
+  const provider = vscode.workspace.getConfiguration('sift.ai').inspect<string>('provider');
+  return [skills, provider?.globalValue ?? provider?.defaultValue ?? 'claude'];
 }

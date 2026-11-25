@@ -66,7 +66,13 @@ export class AiService {
         throw new Error('There are no uncommitted changes to plan.');
       }
       const files: PlanFile[] = [];
+      // A file split across commits has one entry per part: the AI sees it once, whole.
+      const seen = new Set<string>();
       for (const file of [...pending].sort((a, b) => a.path.localeCompare(b.path))) {
+        if (seen.has(file.path)) {
+          continue;
+        }
+        seen.add(file.path);
         files.push({ file, diff: file.binary ? '' : await this.controller.diffOf(file.path) });
       }
 

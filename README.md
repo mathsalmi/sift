@@ -63,7 +63,7 @@ Then run **Developer: Reload Window**.
 ## Quick start
 
 1. Open a repo with uncommitted changes and click the **Sift** icon in the activity bar.
-2. Click **Plan commits with AI** (✨). The plan appears in the Sift view, with explanations on the changed lines. To pick another AI, click its name in the status bar.
+2. Click **Plan commits with AI** (✨). The plan appears in the Sift view, with explanations on the changed lines. When one file holds changes that belong in different commits, the AI splits it across them. To pick another AI, click its name in the status bar.
 3. Click a file of the first commit: that commit goes into review. In the diff editor, step through its files with **←** / **→**.
 4. On any line, click **+** in the gutter and write a question or a direction:
    - **Ask AI** sends it now; the answer appears in the thread (stop it with ⏹).

@@ -19,7 +19,32 @@ export const PLAN_SCHEMA = {
           message: { type: 'string', description: 'Imperative subject line (max 72 chars), optional body after a blank line.' },
           intent: { type: 'string', description: 'What this commit does and why, 1-2 sentences, for the reviewer.' },
           riskNotes: { type: 'array', items: { type: 'string' }, description: 'Spots that deserve careful review.' },
-          files: { type: 'array', items: { type: 'string' }, description: 'Repo-relative paths, exactly as listed.' },
+          files: {
+            type: 'array',
+            items: {
+              anyOf: [
+                { type: 'string', description: 'Repo-relative path, exactly as listed: the whole file.' },
+                {
+                  type: 'object',
+                  description: "Part of a file's changes, for a file split across commits.",
+                  properties: {
+                    path: { type: 'string', description: 'Repo-relative path, exactly as listed.' },
+                    lines: {
+                      type: 'array',
+                      items: {
+                        anyOf: [
+                          { type: 'integer', minimum: 1 },
+                          { type: 'array', items: { type: 'integer', minimum: 1 }, minItems: 2, maxItems: 2 },
+                        ],
+                      },
+                      description: 'Line numbers from the diff\'s left column, as [first, last] ranges or single lines: the commit gets every changed block they touch.',
+                    },
+                  },
+                  required: ['path', 'lines'],
+                },
+              ],
+            },
+          },
           dependsOn: {
             type: 'array',
             items: { type: 'integer', minimum: 1 },
@@ -99,7 +124,8 @@ export function planPrompt(repoName: string, files: PlanFile[]): string {
   return `You help a developer turn their uncommitted changes in the "${repoName}" repository into a sequence of small, atomic git commits. They will review the commits one by one in their editor, reading your explanations next to the code.
 
 Rules:
-- Every file listed below goes into exactly one commit. Use the paths exactly as listed.
+- Every file listed below goes into one commit (or is split, see next rule). Use the paths exactly as listed.
+- When one file holds changes that belong to different commits, split it: in each of those commits list it as {"path": ..., "lines": [[first, last], ...]} with the line numbers (left column) of the changed lines that commit gets, and in one of them as the plain path to take the rest. For removed lines, which have no number, use the number of the line just above them. Only modified text files can be split, and only when their changes really belong apart; most files go whole into one commit.
 - Order the commits so each builds on the earlier ones (foundations first). Each commit should make sense on its own.
 - message: imperative subject line (max 72 characters); add a body after a blank line only when it helps.
 - intent: what the commit does and why, in 1-2 sentences.

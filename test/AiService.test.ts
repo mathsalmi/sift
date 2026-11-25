@@ -89,6 +89,35 @@ describe('planning with AI', () => {
   });
 });
 
+describe('planning with AI: splits', () => {
+  it('splits a file across commits by the line numbers of its diff, and shows a split file once', async () => {
+    const twenty = Array.from({ length: 20 }, (_, i) => `line ${i + 1}`);
+    repo.write('src/a.ts', twenty.map((l, i) => (i === 1 ? 'two' : i === 17 ? 'eighteen' : l)).join('\n') + '\n');
+    repo.git('add', 'src/a.ts');
+    repo.git('commit', '-qm', 'twenty lines');
+    repo.write('src/a.ts', twenty.join('\n') + '\n');
+    answers.push({
+      commits: [
+        { message: 'Second line', intent: '', files: [{ path: 'src/a.ts', lines: [2] }, 'src/b.ts'], explanations: [] },
+        { message: 'Rest', intent: '', files: ['src/a.ts', 'src/c.ts'], explanations: [] },
+      ],
+    });
+
+    await ai.planCommits();
+
+    expect(prompts[0]).toMatch(/split it/);
+    const model = controller.review!;
+    const [first, rest] = model.commitsInOrder().map((c) => c.id);
+    expect(model.findFile('src/a.ts', first)).toMatchObject({ part: { own: 1, total: 2 } });
+    expect(model.findFile('src/a.ts', rest)).toMatchObject({ part: { own: 1, total: 2 } });
+
+    // Planning again: the split file is in the prompt once.
+    answers.push(plan);
+    await ai.planCommits();
+    expect(prompts[1].match(/^- src\/a\.ts /gm)).toHaveLength(1);
+  });
+});
+
 describe('asking AI in a thread', () => {
   beforeEach(async () => {
     answers.push(plan);

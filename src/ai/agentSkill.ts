@@ -30,7 +30,7 @@ Sift is a VS Code extension in which the user reviews uncommitted changes as a p
 ## Plan the commits
 
 1. See what changed: \`git status --porcelain=v1 -uall\` and \`git diff HEAD\`. Read untracked files you need.
-2. If \`.sift/state.json\` exists, read it to see the current plan. Each entry of \`commits\` has an \`id\` and a \`message\`. Each entry of \`files\` has a \`path\` and a \`commitId\` (\`null\` is Unassigned). Keep the user's grouping where it still makes sense, and keep a commit's exact message to keep its review.
+2. If \`.sift/state.json\` exists, read it to see the current plan. Each entry of \`commits\` has an \`id\` and a \`message\`. Each entry of \`files\` has a \`path\` and a \`commitId\` (\`null\` is Unassigned); a file split across commits has one entry per commit, and those with \`hunks\` list the blocks they hold by first line (\`start\`) and line count (\`lines\`). Keep the user's grouping where it still makes sense, and keep a commit's exact message to keep its review.
 3. Group the changed files into logical, atomic commits in a sensible order, foundations first. Each commit should build and pass its tests on its own.
 4. Write \`.sift/plan.json\` (create \`.sift/\` if needed):
 
@@ -51,11 +51,11 @@ Sift is a VS Code extension in which the user reviews uncommitted changes as a p
 }
 \`\`\`
 
-- \`files\`: repo-relative paths exactly as git lists them; only files git lists as changed. Each file at most once. Files you leave out go to Unassigned.
+- \`files\`: repo-relative paths exactly as git lists them; only files git lists as changed. Each file in one commit, unless you split it (below). Files you leave out go to Unassigned.
 - \`message\`: imperative subject line, at most 72 characters; a body may follow after a blank line.
 - \`dependsOn\` (optional): 1-based positions of earlier commits in this plan that this one needs.
 - \`explanations\` (optional): notes shown on the diff. \`path\` must be one of the commit's files; \`line\` is 1-based in the current file. Put them only on lines that carry intent or risk, not on imports or renames.
-- A plan places whole files. To split one file's changes across commits, tell the user to use **Split changes across commits** in Sift.
+- To split one file's changes across commits, list it in each of those commits as \`{ "path": "src/a.ts", "lines": [[12, 18], 40] }\`. \`lines\` are 1-based line ranges \`[first, last]\` or single lines in the current file; the commit gets every block of changes they touch. Read the blocks with \`git diff -U0 HEAD -- <file>\`: in a header \`@@ -a,b +c,d @@\`, the block is lines c to c+d-1, and a deletion (d = 0) is at line c, the line just above where it was (line 1 at the top of the file). A plain path in one of the commits takes the rest; with none, the rest goes to Unassigned. A block can't be cut further, and only changes to existing text files can be split.
 
 ## After writing the plan
 

@@ -61,7 +61,8 @@ describe('applyPlan', () => {
     expect(() => m.applyPlan({ commits: [{ message: 'X', files: ['nope.ts'] }] })).toThrow(/not a changed file/);
     expect(() =>
       m.applyPlan({ commits: [{ message: 'X', files: ['a.ts'] }, { message: 'Y', files: ['a.ts'] }] }),
-    ).toThrow(/more than once/);
+    ).toThrow(/without "lines" in more than one commit/);
+    expect(() => m.applyPlan({ commits: [{ message: 'X', files: ['a.ts', 'a.ts'] }] })).toThrow(/lists "a.ts" more than once/);
     expect(m.state.commits).toEqual([]);
   });
 

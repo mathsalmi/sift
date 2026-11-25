@@ -87,8 +87,9 @@ export function applyHunks(base: string, hunks: Hunk[]): string {
 
 /** Whether a hunk touches a 1-based working-tree line range. */
 export function hunkTouches(hunk: Hunk, fromLine: number, toLine: number): boolean {
-  const start = hunk.newStart;
-  const end = hunk.newLines === 0 ? hunk.newStart : hunk.newStart + hunk.newLines - 1;
+  // A deletion sits at the line above it; at the top of the file, at line 1.
+  const start = hunk.newLines === 0 ? Math.max(hunk.newStart, 1) : hunk.newStart;
+  const end = hunk.newLines === 0 ? start : hunk.newStart + hunk.newLines - 1;
   return start <= toLine && Math.max(end, start) >= fromLine;
 }
 

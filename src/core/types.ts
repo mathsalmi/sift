@@ -143,13 +143,25 @@ export interface PlanExplanation {
   body: string;
 }
 
+/** Part of a file's changes in a plan: the blocks of changes these working-tree lines touch. */
+export interface PlanFilePart {
+  path: string;
+  /** 1-based line ranges, [first, last], or a single line. A deletion is at the line just above where it was. */
+  lines: Array<number | [number, number]>;
+}
+
 /** Shape of a plan: from the AI, or .sift/plan.json written by hand. */
 export interface PlanInput {
   commits: Array<{
     message: string;
     intent?: string;
     riskNotes?: string[];
-    files: string[];
+    /**
+     * Whole files by path, or part of a file's changes: `lines` are 1-based line ranges of the
+     * working-tree file, and the part holds every block of changes they touch. A file split this
+     * way is listed in each commit that gets a part of it; a listing without `lines` takes the rest.
+     */
+    files: Array<string | PlanFilePart>;
     explanations?: PlanExplanation[];
     /** 1-based positions of earlier commits in this plan that this one builds on. */
     dependsOn?: number[];

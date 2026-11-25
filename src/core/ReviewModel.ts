@@ -1,5 +1,5 @@
 import type { FileChange } from '../git/changes';
-import { hunkSignature, type Hunk } from '../git/hunks';
+import { hunkLabel, hunkSignature, hunkTouches, type Hunk } from '../git/hunks';
 import type {
   CommitReviewStatus,
   FileRef,
@@ -8,6 +8,7 @@ import type {
   Iteration,
   MessageAuthor,
   PlanCommit,
+  PlanFilePart,
   PlanInput,
   ReviewFile,
   ReviewState,
@@ -620,13 +621,17 @@ export class ReviewModel {
 
   // ---- plan ----
 
-  /** With `requireAll`, every pending file must be in the plan (used for plans coming from the AI). */
-  applyPlan(plan: PlanInput, requireAll = false): { unassigned: number } {
+  /**
+   * With `requireAll`, every pending file must be in the plan (used for plans coming from the AI).
+   * `hunks` holds the blocks of changes of the files the plan splits (see planSplitPaths).
+   */
+  applyPlan(plan: PlanInput, requireAll = false, hunks: Map<string, Hunk[]> = new Map()): { unassigned: number } {
     if (!plan || !Array.isArray(plan.commits)) {
       throw new Error('Plan must have a "commits" array.');
     }
 
-    const seen = new Set<string>();
+    // Where the plan puts each file: commit index, and the line ranges of a part.
+    const mentions = new Map<string, Array<{ index: number; lines?: Array<[number, number]> }>>();
     plan.commits.forEach((commit, index) => {
       if (!commit.message || !commit.message.trim()) {
         throw new Error(`Plan commit #${index + 1} has no message.`);
@@ -634,7 +639,8 @@ export class ReviewModel {
       if (!Array.isArray(commit.files)) {
         throw new Error(`Plan commit #${index + 1} has no "files" array.`);
       }
-      for (const filePath of commit.files) {
+      for (const entry of commit.files) {
+        const { path: filePath, lines } = readPlanFile(entry, index);
         const file = this.findFile(filePath);
         if (!file) {
           throw new Error(`Plan lists "${filePath}", which is not a changed file.`);
@@ -642,10 +648,12 @@ export class ReviewModel {
         if (this.isCommittedFile(file)) {
           throw new Error(`Plan lists "${filePath}", which is already committed.`);
         }
-        if (seen.has(filePath)) {
-          throw new Error(`Plan lists "${filePath}" more than once.`);
+        const list = mentions.get(filePath) ?? [];
+        if (list.some((m) => m.index === index)) {
+          throw new Error(`Plan commit #${index + 1} lists "${filePath}" more than once.`);
         }
-        seen.add(filePath);
+        list.push({ index, lines });
+        mentions.set(filePath, list);
       }
       if (commit.dependsOn !== undefined && !Array.isArray(commit.dependsOn)) {
         throw new Error(`Plan commit #${index + 1}: "dependsOn" must be an array of commit numbers.`);
@@ -655,8 +663,9 @@ export class ReviewModel {
           throw new Error(`Plan commit #${index + 1} depends on #${String(dependency)}; it can only depend on commits before it.`);
         }
       }
+      const paths = commit.files.map(planFilePath);
       for (const note of commit.explanations ?? []) {
-        if (!commit.files.includes(note?.path)) {
+        if (!paths.includes(note?.path)) {
           throw new Error(`Plan commit #${index + 1} explains "${note?.path}", which is not one of its files.`);
         }
         if (!Number.isInteger(note.line) || note.line < 1) {
@@ -668,8 +677,50 @@ export class ReviewModel {
       }
     });
 
+    // Files the plan splits: which blocks of changes each listing takes (null: the rest).
+    const splits = new Map<string, Map<number, string[] | null>>();
+    for (const [filePath, list] of mentions) {
+      if (list.length === 1 && !list[0].lines) {
+        continue;
+      }
+      const file = this.findFile(filePath)!;
+      if (file.binary || file.changeType !== 'modified') {
+        throw new Error(`Plan splits "${filePath}", but only changes to an existing text file can be split; it is ${file.binary ? 'binary' : file.changeType}.`);
+      }
+      if (list.filter((m) => !m.lines).length > 1) {
+        throw new Error(`Plan lists "${filePath}" without "lines" in more than one commit; only one listing can take the rest of its changes.`);
+      }
+      const all = hunks.get(filePath) ?? [];
+      const owner = new Map<string, number>();
+      const parts = new Map<number, string[] | null>();
+      for (const { index, lines } of list) {
+        if (!lines) {
+          parts.set(index, null);
+          continue;
+        }
+        const keys = new Set<string>();
+        for (const [first, last] of lines) {
+          const touched = all.filter((h) => hunkTouches(h, first, last));
+          if (touched.length === 0) {
+            throw new Error(`Plan commit #${index + 1}: ${rangeLabel(first, last)} of "${filePath}" have no changes.`);
+          }
+          touched.forEach((h) => keys.add(h.key));
+        }
+        for (const key of keys) {
+          const other = owner.get(key);
+          if (other !== undefined && other !== index) {
+            const hunk = all.find((h) => h.key === key)!;
+            throw new Error(`Plan puts the change at ${hunkLabel(hunk).toLowerCase()} of "${filePath}" in both commit #${other + 1} and #${index + 1}.`);
+          }
+          owner.set(key, index);
+        }
+        parts.set(index, [...keys]);
+      }
+      splits.set(filePath, parts);
+    }
+
     if (requireAll) {
-      const missing = this.state.files.filter((f) => !this.isCommittedFile(f) && !seen.has(f.path)).map((f) => f.path);
+      const missing = this.state.files.filter((f) => !this.isCommittedFile(f) && !mentions.has(f.path)).map((f) => f.path);
       if (missing.length > 0) {
         throw new Error(`Plan leaves out ${missing.length} changed file(s): ${missing.slice(0, 10).join(', ')}`);
       }
@@ -710,13 +761,16 @@ export class ReviewModel {
           : (reused?.dependsOn ?? []).filter((id) => before.has(id) || committedIds.has(id));
       commit.dependsOn = dependsOn.length > 0 ? dependsOn : undefined;
       placed.push(commit);
-      for (const filePath of input.files) {
+      for (const filePath of input.files.map(planFilePath)) {
+        if (splits.has(filePath)) {
+          continue;
+        }
         const entries = this.pendingEntries(filePath);
         const file = entries.find((f) => f.commitId === commit.id) ?? entries[0];
         if (!file) {
           continue;
         }
-        // A plan places whole files: a split file is one again.
+        // A file listed once without lines goes whole: a split file is one again.
         for (const other of entries.filter((f) => f !== file)) {
           this.state.files.splice(this.state.files.indexOf(other), 1);
         }
@@ -729,6 +783,9 @@ export class ReviewModel {
         }
       }
     });
+    for (const [filePath, parts] of splits) {
+      this.placeParts(filePath, parts, placed, hunks.get(filePath) ?? []);
+    }
     // Parts of split files left out of the plan that ended up together (both Unassigned) join.
     for (const filePath of this.splitPaths()) {
       const entries = this.pendingEntries(filePath);
@@ -762,6 +819,43 @@ export class ReviewModel {
   }
 
   /**
+   * Splits a file across commits as a plan says: `parts` maps a commit (its index in the plan) to the
+   * blocks of changes it takes, null for the rest. Changes no part takes go to Unassigned. A part
+   * keeps its review when it holds the same changes in the same commit as before.
+   */
+  private placeParts(filePath: string, parts: Map<number, string[] | null>, placed: PlanCommit[], hunks: Hunk[]): void {
+    const old = this.pendingEntries(filePath);
+    const allKeys = hunks.map((h) => h.key);
+    const before = new Map(old.map((f) => [f, new Set(this.ownKeys(f, allKeys))]));
+    const template: ReviewFile = { ...old[0] };
+    this.state.files = this.state.files.filter((f) => !old.includes(f));
+
+    const claimed = new Set([...parts.values()].flatMap((keys) => keys ?? []));
+    const rest = allKeys.filter((k) => !claimed.has(k));
+    const targets = [...parts].map(([index, keys]) => ({ commitId: placed[index].id as string | null, keys }));
+    if (rest.length > 0 && !targets.some((t) => t.keys === null)) {
+      targets.push({ commitId: null, keys: null });
+    }
+    const kept = targets.filter((t) => (t.keys ?? rest).length > 0);
+    for (const { commitId, keys } of kept) {
+      const own = keys ?? rest;
+      const previous = old.find((f) => f.commitId === commitId);
+      const entry: ReviewFile = previous ?? { ...template, commitId };
+      entry.part = undefined;
+      entry.hunks =
+        kept.length === 1 || keys === null
+          ? undefined
+          : hunks.filter((h) => keys.includes(h.key)).map((h) => ({ key: h.key, start: h.newStart, lines: h.newLines }));
+      const had = previous ? before.get(previous)! : null;
+      if (!had || had.size !== own.length || own.some((k) => !had.has(k))) {
+        this.clearReview(entry);
+        delete entry.changedInIteration;
+      }
+      this.state.files.push(entry);
+    }
+  }
+
+  /**
    * Planned commits a plan keeps, by the plan's commit index: matched on the whole message, then on the
    * subject, then on most of their files.
    */
@@ -788,7 +882,7 @@ export class ReviewModel {
       if (result.has(index)) {
         return;
       }
-      const wanted = new Set(input.files);
+      const wanted = new Set(input.files.map(planFilePath));
       const best = open
         .filter((c) => !taken.has(c.id))
         .map((c) => {
@@ -1425,4 +1519,50 @@ function newFile(change: FileChange): ReviewFile {
     dels: change.dels,
     binary: change.binary,
   };
+}
+
+/** The path of a file listed in a plan. */
+export function planFilePath(entry: string | PlanFilePart): string {
+  return typeof entry === 'string' ? entry : entry?.path;
+}
+
+/** Paths a plan lists with line ranges or in more than one commit: their blocks of changes are needed. */
+export function planSplitPaths(plan: PlanInput): string[] {
+  const count = new Map<string, number>();
+  const ranged = new Set<string>();
+  for (const commit of Array.isArray(plan?.commits) ? plan.commits : []) {
+    for (const entry of Array.isArray(commit?.files) ? commit.files : []) {
+      const filePath = planFilePath(entry);
+      count.set(filePath, (count.get(filePath) ?? 0) + 1);
+      if (typeof entry === 'object' && entry !== null) {
+        ranged.add(filePath);
+      }
+    }
+  }
+  return [...count].filter(([filePath, n]) => n > 1 || ranged.has(filePath)).map(([filePath]) => filePath);
+}
+
+function readPlanFile(entry: unknown, index: number): { path: string; lines?: Array<[number, number]> } {
+  if (typeof entry === 'string') {
+    return { path: entry };
+  }
+  const part = entry as PlanFilePart;
+  if (!part || typeof part !== 'object' || typeof part.path !== 'string') {
+    throw new Error(`Plan commit #${index + 1} lists a file that is neither a path nor { "path", "lines" }.`);
+  }
+  if (!Array.isArray(part.lines) || part.lines.length === 0) {
+    throw new Error(`Plan commit #${index + 1}: "${part.path}" needs "lines", a list of line ranges such as [[12, 18], 40].`);
+  }
+  const lines = part.lines.map((range): [number, number] => {
+    const [first, last] = typeof range === 'number' ? [range, range] : Array.isArray(range) ? range : [NaN, NaN];
+    if (!Number.isInteger(first) || !Number.isInteger(last) || first < 1 || last < first) {
+      throw new Error(`Plan commit #${index + 1}: "${part.path}" has an invalid line range ${JSON.stringify(range)}; use 1-based [first, last] or a single line.`);
+    }
+    return [first, last];
+  });
+  return { path: part.path, lines };
+}
+
+function rangeLabel(first: number, last: number): string {
+  return first === last ? `line ${first}` : `lines ${first}–${last}`;
 }

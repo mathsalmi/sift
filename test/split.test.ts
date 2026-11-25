@@ -174,3 +174,52 @@ describe('amend', () => {
     await expect(controller.amend(['b.txt'], a)).rejects.toThrow(/not committed yet/);
   });
 });
+
+describe('plans that split files', () => {
+  it('splits files by line ranges from a plan, keeps the review of a part and checks the ranges', async () => {
+    repo.write('a.txt', lines((i) => (i === 2 ? 'two' : i === 20 ? 'twenty' : i === 25 ? 'twenty-five' : null)));
+    repo.write('b.txt', 'b2\n');
+    await controller.startReview();
+    const plan = {
+      commits: [
+        { message: 'A', files: [{ path: 'a.txt', lines: [[1, 3] as [number, number]] }, 'b.txt'] },
+        { message: 'B', files: [{ path: 'a.txt', lines: [20] }] },
+      ],
+    };
+    await controller.setPlan(plan, undefined);
+    const model = controller.review!;
+    const [a, b] = model.commitsInOrder().map((c) => c.id);
+    // Line 25 is in neither: it waits in Unassigned.
+    expect(model.pendingEntries('a.txt').map((f) => [f.commitId, f.part?.own])).toEqual([
+      [a, 1],
+      [b, 1],
+      [null, 1],
+    ]);
+
+    // A commit lists a file once; without "lines" it takes the rest (lines 20 and 25), and is reviewed again.
+    await expect(
+      controller.setPlan({ commits: [plan.commits[0], { message: 'B', files: [{ path: 'a.txt', lines: [20] }, { path: 'a.txt', lines: [25] }] }] }),
+    ).rejects.toThrow(/more than once/);
+    await controller.setPlan({ commits: [plan.commits[0], { message: 'B', files: ['a.txt'] }] });
+    expect(model.findFile('a.txt', b)).toMatchObject({ part: { own: 2, total: 3 }, status: 'todo' });
+    // The same parts again keep their approval.
+    await controller.setStatus([{ path: 'a.txt', commitId: b }], 'done');
+    await controller.setPlan({ commits: [plan.commits[0], { message: 'B', files: ['a.txt'] }] });
+    expect(model.findFile('a.txt', b)!.status).toBe('done');
+
+    // Committing A commits only line 2.
+    await controller.setStatus([{ path: 'a.txt', commitId: a }, { path: 'b.txt' }], 'done');
+    await controller.commitCommits([a]);
+    expect(repo.git('show', 'HEAD:a.txt')).toBe(lines((i) => (i === 2 ? 'two' : null)));
+
+    await expect(controller.setPlan({ commits: [{ message: 'C', files: [{ path: 'a.txt', lines: [10] }] }] })).rejects.toThrow(/line 10 of "a.txt" have no changes/);
+    await expect(
+      controller.setPlan({
+        commits: [
+          { message: 'C', files: [{ path: 'a.txt', lines: [[19, 21]] }] },
+          { message: 'D', files: [{ path: 'a.txt', lines: [20] }] },
+        ],
+      }),
+    ).rejects.toThrow(/line 20 of "a.txt" in both commit #1 and #2/);
+  });
+});

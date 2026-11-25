@@ -506,9 +506,48 @@
                   "files": {
                     "type": "array",
                     "items": {
-                      "type": "string"
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "description": "Repo-relative path of a changed file: the whole file."
+                        },
+                        {
+                          "type": "object",
+                          "description": "Part of a file's changes: the blocks of changes these working-tree lines touch.",
+                          "properties": {
+                            "path": {
+                              "type": "string"
+                            },
+                            "lines": {
+                              "type": "array",
+                              "items": {
+                                "anyOf": [
+                                  {
+                                    "type": "integer",
+                                    "minimum": 1
+                                  },
+                                  {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "integer",
+                                      "minimum": 1
+                                    },
+                                    "minItems": 2,
+                                    "maxItems": 2
+                                  }
+                                ]
+                              },
+                              "description": "1-based line ranges [first, last] or single lines, in the current file. A deleted block is at the line just above where it was."
+                            }
+                          },
+                          "required": [
+                            "path",
+                            "lines"
+                          ]
+                        }
+                      ]
                     },
-                    "description": "Repo-relative paths of changed files. Each changed file in exactly one commit; unlisted files stay unassigned."
+                    "description": "Repo-relative paths of changed files, each in one commit; unlisted files stay unassigned. To split a file's changes across commits, list it in each of those commits as { path, lines }; a plain path in one of them takes the rest."
                   },
                   "explanations": {
                     "type": "array",

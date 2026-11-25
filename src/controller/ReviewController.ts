@@ -2,7 +2,7 @@ import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
 import * as vscode from 'vscode';
-import { approvalKey, emptyOutcome, ReviewModel, subjectOf, type SyncOutcome } from '../core/ReviewModel';
+import { approvalKey, emptyOutcome, planSplitPaths, ReviewModel, subjectOf, type SyncOutcome } from '../core/ReviewModel';
 import { excludedEntries, ignorePaths, trackedPaths, unexcludePatterns, type ExcludeEntry, type IgnoreTarget } from '../git/ignore';
 import type { FileRef, FileStatus, IterationAuthor, PlanCommit, PlanInput, ReviewFile, ReviewThread } from '../core/types';
 import type { GitRunner } from '../git/GitRunner';
@@ -715,7 +715,16 @@ export class ReviewController implements vscode.Disposable {
   ): Promise<{ commits: number; unassigned: number }> {
     const review = this.require();
     await this.sync(review);
-    const { unassigned } = review.applyPlan(plan, requireAll);
+    const hunks = new Map<string, Hunk[]>();
+    for (const filePath of planSplitPaths(plan)) {
+      if (review.findFile(filePath)) {
+        hunks.set(filePath, await this.hunksOf(filePath));
+      }
+    }
+    const { unassigned } = review.applyPlan(plan, requireAll, hunks);
+    if (hunks.size > 0) {
+      await this.sync(review); // works out the parts of the files the plan split
+    }
     const now = new Date().toISOString();
     for (const commit of plan.commits) {
       for (const note of commit.explanations ?? []) {

@@ -133,6 +133,7 @@ To change the plan from outside Sift (an agent, a script), write `.sift/plan.jso
 ```
 
 - Every path must be a changed file, listed once. Unlisted files stay in **Unassigned**.
+- To split a file's changes across commits, list it in each of them as `{ "path": "src/a.ts", "lines": [[12, 18], 40] }`: 1-based line ranges or single lines of the current file (a deleted block is at the line just above where it was). Each commit gets the blocks of changes its lines touch; a plain path in one of them takes the rest, and with none the rest goes to Unassigned. A part that keeps the same changes in the same commit keeps its review.
 - `explanations` are optional; each `path` must be one of the commit's files, `line` is 1-based.
 - `dependsOn` is optional: 1-based positions of earlier commits in the plan that this one builds on.
 - A new plan replaces commits that aren't committed yet.

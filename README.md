@@ -12,9 +12,9 @@ When an AI (or you) changes hundreds of files in one go, reviewing a single gian
 - **Ask about any line:** in a comment, ask a question (the AI answers in the thread) or give a direction (the AI edits the code and says what it changed). Markdown works, **Cmd+Enter** sends, and the thread shows *Thinking…* while the AI works. Edit or delete your own comments. Your comments show your GitHub picture once you allow Sift to use VS Code's GitHub account (Accounts menu).
 - **Your choice of AI:** a command line AI (Claude Code, Codex, Gemini CLI) with your own login, any model VS Code offers (GitHub Copilot's GPT, Claude, Gemini, Grok… or other extensions'), or any command you like.
 - **Versions per file:** Sift freezes your files in a snapshot when a commit's review starts and after each AI edit, and every file gets its own version numbers: a file goes from v0 to v1 only when a round changed it, so an untouched file stays at v0 while another reaches v7. You can diff:
-  - **Latest change** ("This round"): the file's previous version ↔ working tree, while the change is unseen.
+  - **Latest changes**: the file's previous version ↔ working tree, while the change is unseen.
   - **Changed since approval:** a file you edit after approving it shows only that edit: the approved content ↔ working tree.
-  - **Cumulative:** HEAD ↔ working tree, i.e. what will be committed.
+  - **All changes:** HEAD ↔ working tree, i.e. what will be committed.
   - **Any of the file's versions ↔ now,** e.g. v1 ↔ working tree.
 
   Pick one with the **Compare with** dropdown in the diff editor title.
@@ -146,11 +146,11 @@ To change the plan from outside Sift (an agent, a script), write `.sift/plan.jso
 | Approve file | Cmd+Alt+D | Ctrl+Alt+D |
 | Mark to do | Cmd+Alt+U | Ctrl+Alt+U |
 | Next to do (moves on to the next commit once this one is done) | Cmd+Alt+N | Ctrl+Alt+N |
-| Toggle diff mode | Cmd+Alt+M | Ctrl+Alt+M |
+| Switch between latest and all changes | Cmd+Alt+M | Ctrl+Alt+M |
 | Send a comment (Ask AI) | Cmd+Enter | Ctrl+Enter |
 | Open the Sift view (also when the sidebar is hidden) | Ctrl+Shift+S | Ctrl+Alt+S |
 
-In the diff editor, Sift's actions are all under one **Sift** button (the Sift icon) in the editor toolbar, shown only on files in the review: Approve / unapprove file · Next to do · Previous / next file in the commit · Compare with (previous version, last commit, or a specific version) · Ask AI about all open comments · Show / hide AI explanations · Move selected changes to commit · Split changes across commits · Move to commit · Amend into commit · Discard changes.
+In the diff editor, Sift's actions are all under one **Sift** button (the Sift icon) in the editor toolbar, shown only on files in the review: Approve / unapprove file · Next to do · Previous / next file in the commit · Compare with (latest changes, all changes, or a specific version) · Ask AI about all open comments · Show / hide AI explanations · Move selected changes to commit · Split changes across commits · Move to commit · Amend into commit · Discard changes.
 
 Right-click a commit for: Approve and commit · Review this commit · Edit message · Move up / down · Amend into commit · Delete. Right-click a file for: Approve / unapprove · Mark in progress / to do · Add to .gitignore · Exclude locally (.git/info/exclude) · Move to commit (lists the other commits, Unassigned and **New commit**; with no other commit it goes straight to naming a new one) · Split changes across commits · Amend into commit · Discard changes. Right-click a folder for the same on every file under it (Add to .gitignore and Exclude locally add one rule for the whole folder, so files added to it later stay hidden too). Right-click a locally excluded file or folder for: Remove from .git/info/exclude. Right-click an editor tab of a review file for **Sift**: Show in Sift sidebar · Approve / unapprove · Mark in progress · Mark to do · Add to .gitignore · Exclude locally · Move to commit · Split changes across commits · Amend into commit · Discard changes.
 
@@ -172,7 +172,7 @@ Also in the Sift view and command palette: Plan commits with AI · Choose AI · 
 ## How it works
 
 - **Snapshots:** git trees built with a private index (`.git/sift/index`) and kept under `refs/sift/<session>/<commit>/v<N>`. Your real index isn't touched until you approve.
-- **AI calls:** Sift sends the prompt (numbered diffs, the file, the thread) to the chosen AI and asks for JSON. Command line AIs run once per request and read-only: a one-shot run cannot ask for permission, so anything else is denied unless you allow it with `sift.ai.additionalDirectories` or `sift.ai.extraArguments`. Settings from earlier versions (`sift.ai.claudeCodeModel`, …) are moved to these on startup. Code changes come back as search/replace edits; Sift applies all of them or none, only inside the repo, then takes a new snapshot so the files the AI changed get a new version and "latest change" shows exactly what it did.
+- **AI calls:** Sift sends the prompt (numbered diffs, the file, the thread) to the chosen AI and asks for JSON. Command line AIs run once per request and read-only: a one-shot run cannot ask for permission, so anything else is denied unless you allow it with `sift.ai.additionalDirectories` or `sift.ai.extraArguments`. Settings from earlier versions (`sift.ai.claudeCodeModel`, …) are moved to these on startup. Code changes come back as search/replace edits; Sift applies all of them or none, only inside the repo, then takes a new snapshot so the files the AI changed get a new version and "latest changes" shows exactly what it did.
 - **Comments:** stored in the state file and anchored by line text, so they follow code that moves. A thread whose line is gone shows as outdated.
 - **State:** `.sift/state.json` holds only your decisions: the plan, file assignments, approvals, comments. What git knows is read from git every time and never saved: which files changed and how, and which planned commits are committed. Each commit Sift makes is recorded in `refs/sift/<session>/<commit>/commit`; nothing is added to commit messages.
 - **Commits made outside Sift** (terminal, Source Control view, rebase, squash) are picked up as they happen, and when VS Code starts. A planned commit whose files no longer differ from HEAD is committed, linked to the newest commit that touched them; if no commit touched them they were reverted and the commit leaves the plan. A commit that leaves HEAD's history (`git reset`) goes back to the plan. Commits you created empty are left alone.
@@ -184,7 +184,7 @@ Also in the Sift view and command palette: Plan commits with AI · Choose AI · 
 
 - **Splitting works on changes to existing text files**: new, deleted and binary files move whole.
 - **Renames** show as delete + add.
-- **AI edits are plain file writes**, not editor undo steps. Use the "this round" diff or git to review or revert them.
+- **AI edits are plain file writes**, not editor undo steps. Use the "latest changes" diff or git to review or revert them.
 - **Planned:** reviewing an already-committed range (rebase mode).
 
 ## Development

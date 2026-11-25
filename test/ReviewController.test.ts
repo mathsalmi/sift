@@ -78,7 +78,7 @@ describe('ReviewController end to end', () => {
     expect(model.findFile('src/a.ts')).toMatchObject({ status: 'in-progress', changedInIteration: 1 });
     expect(model.findFile('src/c.ts')?.status).toBe('done');
 
-    // "This round" diff = v0 ↔ working tree
+    // "Latest changes" diff = v0 ↔ working tree
     await controller.openDiff('src/a.ts');
     const v0 = model.iterationsOf(first.id)[0];
     expect(lastDiff().left.query).toBe(v0.treeSha);
@@ -88,7 +88,7 @@ describe('ReviewController end to end', () => {
     await controller.openDiff('src/c.ts');
     expect(lastDiff().left.query).toBe('HEAD');
 
-    // Cumulative diff = HEAD ↔ working tree
+    // "All changes" diff = HEAD ↔ working tree
     controller.diffMode = 'cumulative';
     await controller.openDiff('src/a.ts');
     expect(lastDiff().left.query).toBe('HEAD');
@@ -181,7 +181,7 @@ describe('ReviewController end to end', () => {
     // Approving again goes back to the whole change.
     await controller.setStatus(['src/a.ts'], 'done');
     await controller.openDiff('src/a.ts');
-    expect(lastDiff().title).toBe('a.ts (HEAD ↔ v0 · cumulative)');
+    expect(lastDiff().title).toBe('a.ts (HEAD ↔ v0 · all changes)');
   });
 
   it('saves only decisions and reads the rest back from git', async () => {
@@ -307,9 +307,9 @@ describe('ReviewController end to end', () => {
     expect(model.fileVersion(model.findFile('src/a.ts')!)).toBe(0);
     expect(model.fileVersion(model.findFile('src/b.ts')!)).toBe(2);
     await controller.openDiff('src/b.ts');
-    expect(lastDiff().title).toBe('b.ts (v1 ↔ v2 · latest change)');
+    expect(lastDiff().title).toBe('b.ts (v1 ↔ v2 · latest changes)');
     await controller.openDiff('src/a.ts');
-    expect(lastDiff().title).toBe('a.ts (HEAD ↔ v0 · cumulative)');
+    expect(lastDiff().title).toBe('a.ts (HEAD ↔ v0 · all changes)');
   });
 
   it('abort removes state and snapshot refs but keeps files', async () => {

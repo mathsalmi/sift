@@ -74,7 +74,7 @@ export function registerAgentTools(controller: ReviewController): vscode.Disposa
         if (!model?.state.threads.some((t) => t.id === threadId)) {
           throw new Error(`No comment thread ${threadId}. Call sift_getReview for the open ones.`);
         }
-        // Code the agent changed for this answer gets its own version, so "latest change" shows it.
+        // Code the agent changed for this answer gets its own version, so "latest changes" shows it.
         if (model.currentCommit()) {
           await controller.takeSnapshot('ai');
         }

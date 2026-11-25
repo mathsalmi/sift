@@ -9,7 +9,7 @@ export interface AiStatus {
 }
 
 /**
- * "Review · Commit 3/14 · 212/500 approved · this round · AI working", and next to it the AI in
+ * "Review · Commit 3/14 · 212/500 approved · AI working", and next to it the AI in
  * use ("Claude Code"), which opens the AI picker.
  */
 export class StatusBar implements vscode.Disposable {
@@ -70,7 +70,6 @@ export class StatusBar implements vscode.Disposable {
       parts.push(`${p.committedCommits}/${p.commitCount} committed`);
     }
     parts.push(`${p.doneFiles}/${p.totalFiles} approved`);
-    parts.push(this.controller.diffMode === 'round' ? 'this round' : 'cumulative');
     if (busy > 0) {
       parts.push('$(sync~spin) AI working');
     }

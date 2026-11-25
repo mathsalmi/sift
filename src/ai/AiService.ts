@@ -164,7 +164,7 @@ export class AiService {
       if (changed.length > 0) {
         await this.controller.refresh();
         if (this.controller.review?.currentCommit()) {
-          // A new round, so "this round" diffs show exactly what the AI changed.
+          // A new round, so "latest changes" diffs show exactly what the AI changed.
           await this.controller.takeSnapshot('ai').catch(() => null);
         }
       }

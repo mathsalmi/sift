@@ -121,7 +121,7 @@
       },
       {
         "command": "sift.toggleDiffMode",
-        "title": "Toggle diff mode (this round / cumulative)",
+        "title": "Switch between latest changes and all changes",
         "category": "Sift",
         "icon": "$(diff)"
       },
@@ -432,22 +432,22 @@
       },
       {
         "command": "sift.diffRound",
-        "title": "Previous version (this round)",
+        "title": "Latest changes",
         "category": "Sift"
       },
       {
         "command": "sift.diffRoundOn",
-        "title": "✓ Previous version (this round)",
+        "title": "✓ Latest changes",
         "category": "Sift"
       },
       {
         "command": "sift.diffCumulative",
-        "title": "Last commit (HEAD): the whole change",
+        "title": "All changes since the last commit",
         "category": "Sift"
       },
       {
         "command": "sift.diffCumulativeOn",
-        "title": "✓ Last commit (HEAD): the whole change",
+        "title": "✓ All changes since the last commit",
         "category": "Sift"
       },
       {

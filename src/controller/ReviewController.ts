@@ -868,9 +868,9 @@ export class ReviewController implements vscode.Disposable {
     } else if (this.diffMode === 'round' && latest && previous && file.changedInIteration !== undefined) {
       // The file's last change, while it is unseen; once approved, the whole change again.
       left = snapshotUri(previous.treeSha, filePath);
-      title = `${name} (${version(previous.n)} ↔ ${version(latest.n)} · latest change)`;
+      title = `${name} (${version(previous.n)} ↔ ${version(latest.n)} · latest changes)`;
     } else if (latest) {
-      title = `${name} (HEAD ↔ ${version(latest.n)} · cumulative)`;
+      title = `${name} (HEAD ↔ ${version(latest.n)} · all changes)`;
     }
 
     await vscode.commands.executeCommand('vscode.diff', left, right, title, { preview: true });

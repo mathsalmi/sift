@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="resources/logo/sift-paper.png">
+  <img src="resources/logo/sift-ink.png" width="96" alt="Sift">
+</picture>
+
 # Sift
 
 **Sift a large change set into reviewed, atomic commits, and ask the AI of your choice about any line.**

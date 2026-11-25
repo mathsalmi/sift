@@ -24,7 +24,7 @@
         {
           "id": "sift",
           "title": "Sift",
-          "icon": "resources/icon.svg"
+          "icon": "resources/sift-activity.svg"
         }
       ]
     },
@@ -1468,8 +1468,8 @@
         "id": "sift.diff",
         "label": "Sift",
         "icon": {
-          "light": "resources/sift-light.svg",
-          "dark": "resources/sift-dark.svg"
+          "light": "resources/sift-menu-light.svg",
+          "dark": "resources/sift-menu-dark.svg"
         }
       }
     ]

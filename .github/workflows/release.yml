@@ -1,0 +1,69 @@
+name: Release
+
+# Push a tag to release the version in package.json:
+#   v0.4.0      a regular release
+#   v0.4.0-pre  a pre-release (only people who opt in get it)
+# The workflow builds the .vsix and attaches it to a GitHub release. Upload that file on
+# https://marketplace.visualstudio.com/manage (the Marketplace no longer takes tokens).
+# It also publishes to Open VSX when the OVSX_PAT secret is set.
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+
+      - name: Check the tag matches package.json
+        id: version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          version="${tag%-pre}"
+          expected="$(node -p "require('./package.json').version")"
+          if [ "$version" != "$expected" ]; then
+            echo "Tag $GITHUB_REF_NAME doesn't match version $expected in package.json" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [ "$tag" != "$version" ]; then echo "pre=true" >> "$GITHUB_OUTPUT"; else echo "pre=false" >> "$GITHUB_OUTPUT"; fi
+
+      - name: Build the .vsix
+        run: |
+          if [ "${{ steps.version.outputs.pre }}" = true ]; then
+            npm run package -- --pre-release
+          else
+            npm run package
+          fi
+
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          flags=""
+          if [ "${{ steps.version.outputs.pre }}" = true ]; then flags="--prerelease"; fi
+          gh release create "$GITHUB_REF_NAME" "sift-${{ steps.version.outputs.version }}.vsix" \
+            --title "Sift ${{ steps.version.outputs.version }}" --generate-notes $flags
+
+      - name: Publish to Open VSX
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: |
+          if [ -z "$OVSX_PAT" ]; then
+            echo "OVSX_PAT isn't set; skipping Open VSX."
+            exit 0
+          fi
+          flags=""
+          if [ "${{ steps.version.outputs.pre }}" = true ]; then flags="--pre-release"; fi
+          npx --yes ovsx publish "sift-${{ steps.version.outputs.version }}.vsix" -p "$OVSX_PAT" $flags

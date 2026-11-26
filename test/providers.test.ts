@@ -1,4 +1,5 @@
 import * as os from 'node:os';
+import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { CLI_PRESETS, claudeArgs, codexArgs, geminiArgs } from '../src/ai/providers';
 
@@ -18,7 +19,7 @@ describe('claudeArgs', () => {
     expect(args).not.toContain('--strict-mcp-config');
     expect(args[args.indexOf('--tools') + 1]).toBe('Read,Grep,Glob,WebFetch,Bash');
     expect(args).toContain('--allowedTools=WebFetch,Bash(git log *),mcp__claude_ai_Atlassian');
-    expect(args).toContain(`--add-dir=${os.homedir()}/code`);
+    expect(args).toContain(`--add-dir=${path.join(os.homedir(), 'code')}`);
     expect(args).toContain('--add-dir=/tmp/other');
     expect(args[args.indexOf('--model') + 1]).toBe('haiku');
   });
@@ -38,7 +39,7 @@ describe('geminiArgs', () => {
     const args = geminiArgs('flash', ['~/code']);
     expect(args.slice(0, 2)).toEqual(['--output-format', 'json']);
     expect(args[args.indexOf('--model') + 1]).toBe('flash');
-    expect(args[args.indexOf('--include-directories') + 1]).toBe(`${os.homedir()}/code`);
+    expect(args[args.indexOf('--include-directories') + 1]).toBe(path.join(os.homedir(), 'code'));
     expect(args.at(-2)).toBe('--prompt');
   });
 });

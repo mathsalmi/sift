@@ -20,6 +20,8 @@ export function createRepo(initialFiles: Record<string, string> = { 'README.md':
   git('config', 'user.name', 'Test User');
   git('config', 'user.email', 'test@example.com');
   git('config', 'commit.gpgsign', 'false');
+  // Windows runners default to core.autocrlf=true; keep files byte for byte as written.
+  git('config', 'core.autocrlf', 'false');
 
   const repo: TempRepo = {
     dir,

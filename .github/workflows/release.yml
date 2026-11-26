@@ -1,15 +1,14 @@
 name: Release
 
-# Push a tag to release the version in package.json:
-#   v0.4.0      a regular release
-#   v0.4.0-pre  a pre-release (only people who opt in get it)
-# The workflow builds the .vsix and attaches it to a GitHub release. Upload that file on
+# Runs when a GitHub release is published. The release's tag must be v<version>, matching
+# package.json, and its notes are the changelog. A release marked as a pre-release is built as one.
+# The workflow builds the .vsix and attaches it to the release. Upload that file on
 # https://marketplace.visualstudio.com/manage (the Marketplace no longer takes tokens).
 # It also publishes to Open VSX when the OVSX_PAT secret is set.
 
 on:
-  push:
-    tags: ['v*']
+  release:
+    types: [published]
 
 permissions:
   contents: write
@@ -17,8 +16,13 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.release.tag_name }}
+      PRE: ${{ github.event.release.prerelease }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -27,34 +31,25 @@ jobs:
       - run: npm test
 
       - name: Check the tag matches package.json
-        id: version
         run: |
-          tag="${GITHUB_REF_NAME#v}"
-          version="${tag%-pre}"
-          expected="$(node -p "require('./package.json').version")"
-          if [ "$version" != "$expected" ]; then
-            echo "Tag $GITHUB_REF_NAME doesn't match version $expected in package.json" >&2
+          expected="v$(node -p "require('./package.json').version")"
+          if [ "$TAG" != "$expected" ]; then
+            echo "The release tag $TAG doesn't match $expected from package.json" >&2
             exit 1
           fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          if [ "$tag" != "$version" ]; then echo "pre=true" >> "$GITHUB_OUTPUT"; else echo "pre=false" >> "$GITHUB_OUTPUT"; fi
 
       - name: Build the .vsix
         run: |
-          if [ "${{ steps.version.outputs.pre }}" = true ]; then
-            npm run package -- --pre-release
+          if [ "$PRE" = true ]; then
+            npm run package -- --pre-release --out "sift-${TAG#v}.vsix"
           else
-            npm run package
+            npm run package -- --out "sift-${TAG#v}.vsix"
           fi
 
-      - name: Create the GitHub release
+      - name: Attach it to the release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          flags=""
-          if [ "${{ steps.version.outputs.pre }}" = true ]; then flags="--prerelease"; fi
-          gh release create "$GITHUB_REF_NAME" "sift-${{ steps.version.outputs.version }}.vsix" \
-            --title "Sift ${{ steps.version.outputs.version }}" --generate-notes $flags
+        run: gh release upload "$TAG" "sift-${TAG#v}.vsix" --clobber
 
       - name: Publish to Open VSX
         env:
@@ -65,5 +60,5 @@ jobs:
             exit 0
           fi
           flags=""
-          if [ "${{ steps.version.outputs.pre }}" = true ]; then flags="--pre-release"; fi
-          npx --yes ovsx publish "sift-${{ steps.version.outputs.version }}.vsix" -p "$OVSX_PAT" $flags
+          if [ "$PRE" = true ]; then flags="--pre-release"; fi
+          npx --yes ovsx publish "sift-${TAG#v}.vsix" -p "$OVSX_PAT" $flags

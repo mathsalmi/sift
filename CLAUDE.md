@@ -30,8 +30,18 @@ These come from the owner's feedback. Follow them in every change.
 - `npm test` runs vitest on real temporary git repos (`test/helpers.ts`). `npm run typecheck` runs tsc.
 - Run both before every commit. Add tests for new behavior.
 - `test/vscode-mock.ts` stubs the VS Code API. Extend it when code uses a new API.
-- Install locally with the **Install Sift** build task (Cmd+Shift+B). It runs `npm run package && code --install-extension sift-0.3.0.vsix --force`. Then the owner reloads the window.
-- The vsix file name follows the version in `package.json`.
+- Install locally with the **Install Sift** build task (Cmd+Shift+B). It runs `npm run package -- --out sift.vsix && code --install-extension sift.vsix --force`. Then the owner reloads the window.
+- CI (`.github/workflows/ci.yml`) runs typecheck and tests on Linux, macOS and Windows. Keep tests portable: build paths with `path.join`, and don't assume `/` or `\n` line endings from the platform.
+
+## Versions and releases
+
+- Sift follows semantic versioning, `MAJOR.MINOR.PATCH`, starting at 1.0.0:
+  - **PATCH** for fixes that change no behavior the user relies on.
+  - **MINOR** for new features, commands or settings that keep existing ones working.
+  - **MAJOR** when something users or agents rely on breaks: a removed or renamed command or setting, an incompatible `.sift/plan.json` or `.sift/state.json` format, a changed `sift_*` tool contract.
+- Bump the version in `package.json` in its own commit right before a release, not with each change.
+- There is no `CHANGELOG.md`. The notes live in the GitHub release.
+- To release: create a GitHub release with a tag `v<version>` matching `package.json`, and write the notes there. Tick **Set as a pre-release** for one only opt-in users should get. `.github/workflows/release.yml` builds the `.vsix`, attaches it to the release and publishes to Open VSX when the `OVSX_PAT` secret is set. The Marketplace takes no tokens: the owner uploads the `.vsix` at marketplace.visualstudio.com/manage.
 
 ## Code map
 

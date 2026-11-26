@@ -5,7 +5,7 @@
       "label": "Install Sift",
       "detail": "Package the extension and install it in this VS Code (then reload the window)",
       "type": "shell",
-      "command": "npm run package && code --install-extension sift-0.3.0.vsix --force",
+      "command": "npm run package -- --out sift.vsix && code --install-extension sift.vsix --force",
       "group": { "kind": "build", "isDefault": true },
       "problemMatcher": [],
       "presentation": { "reveal": "silent", "revealProblems": "onProblem", "clear": true }

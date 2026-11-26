@@ -59,8 +59,8 @@ Sift isn't on the Marketplace yet. Build and install the `.vsix`:
 git clone https://github.com/mathsalmi/sift.git
 cd sift
 npm install
-npm run package
-code --install-extension sift-0.3.0.vsix --force
+npm run package -- --out sift.vsix
+code --install-extension sift.vsix --force
 ```
 
 Then run **Developer: Reload Window**.

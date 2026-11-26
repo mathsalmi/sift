@@ -7,11 +7,12 @@ const DECORATIONS: Record<ChangeType, vscode.FileDecoration> = {
   added: new vscode.FileDecoration('A', 'Added', new vscode.ThemeColor('gitDecoration.addedResourceForeground')),
   modified: new vscode.FileDecoration('M', 'Modified', new vscode.ThemeColor('gitDecoration.modifiedResourceForeground')),
   deleted: new vscode.FileDecoration('D', 'Deleted', new vscode.ThemeColor('gitDecoration.deletedResourceForeground')),
+  renamed: new vscode.FileDecoration('R', 'Renamed', new vscode.ThemeColor('gitDecoration.renamedResourceForeground')),
 };
 
 /**
  * Resource URI for a file row in the Sift views. It keeps the file name (for the file icon) and
- * carries the change type, which the provider below turns into an A / M / D badge like Source Control.
+ * carries the change type, which the provider below turns into an A / M / D / R badge like Source Control.
  */
 export function changeUri(file: ReviewFile): vscode.Uri {
   return vscode.Uri.from({ scheme: SCHEME, path: `/${file.path}`, query: file.changeType });

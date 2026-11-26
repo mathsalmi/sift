@@ -92,7 +92,7 @@ async function reviewSummary(controller: ReviewController): Promise<unknown> {
     return 'No Sift review in this repository yet. Call sift_setPlan to split the uncommitted changes into commits; that starts one.';
   }
   const fileList = (commitId: string | null) =>
-    model.filesOf(commitId).map((f) => ({ path: f.path, change: f.changeType, status: f.status }));
+    model.filesOf(commitId).map((f) => ({ path: f.path, change: f.changeType, ...(f.oldPath ? { from: f.oldPath } : {}), status: f.status }));
   const current = model.state.session.currentCommitId;
   return {
     commitInReview: current,

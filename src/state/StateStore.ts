@@ -98,7 +98,7 @@ function toSaved(state: ReviewState): unknown {
     ...state,
     version: 2,
     commits: state.commits.map(({ status: _status, sha: _sha, pushed: _pushed, revertedBy: _revertedBy, ...decision }) => decision),
-    files: state.files.map(({ changeType: _type, adds: _adds, dels: _dels, binary: _binary, part: _part, ...decision }) => decision),
+    files: state.files.map(({ changeType: _type, oldPath: _old, adds: _adds, dels: _dels, binary: _binary, part: _part, ...decision }) => decision),
   };
 }
 

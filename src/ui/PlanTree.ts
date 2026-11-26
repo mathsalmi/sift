@@ -315,7 +315,8 @@ export class PlanTree implements vscode.TreeDataProvider<PlanNode>, vscode.TreeD
     const model = this.controller.review;
     item.description = fileDescription(file, !this.options.asTree, (n) => model?.fileVersionAt(file.commitId, file.path, n) ?? n);
     item.iconPath = fileIcon(file);
-    item.tooltip = `${file.path}\n${file.changeType} · ${STATUS_TEXT[file.status]}`;
+    const change = file.oldPath ? `renamed from ${file.oldPath}` : file.changeType;
+    item.tooltip = `${file.path}\n${change} · ${STATUS_TEXT[file.status]}`;
     if (file.part) {
       // Part of a file split across commits.
       item.tooltip += `\nSplit across commits: ${file.part.own} of the file's ${file.part.total} changes are in this one`;
@@ -327,7 +328,7 @@ export class PlanTree implements vscode.TreeDataProvider<PlanNode>, vscode.TreeD
       // Reviewed only once in a commit: no checkbox or status yet.
       item.contextValue = 'file-unassigned';
       item.iconPath = vscode.ThemeIcon.File;
-      item.tooltip = `${file.path}\n${file.changeType} · not in a commit yet: move it to one to review it`;
+      item.tooltip = `${file.path}\n${change} · not in a commit yet: move it to one to review it`;
     } else {
       item.checkboxState = fileCheckbox(file);
       item.contextValue = `file-${file.status}`;

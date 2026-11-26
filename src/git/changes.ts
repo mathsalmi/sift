@@ -6,6 +6,8 @@ import type { ChangeType } from '../core/types';
 export interface FileChange {
   path: string;
   changeType: ChangeType;
+  /** For a renamed file: its path in HEAD. */
+  oldPath?: string;
   adds: number | null;
   dels: number | null;
   binary: boolean;
@@ -14,8 +16,8 @@ export interface FileChange {
 const COUNT_LIMIT_BYTES = 5 * 1024 * 1024;
 
 /**
- * Lists every file that differs between `base` and the working tree,
- * including untracked files. Renames are reported as delete + add (v1).
+ * Lists every file that differs between `base` and the working tree, including untracked files.
+ * A deleted file and a new one with (mostly) the same content are one renamed file.
  */
 export async function listChanges(git: GitRunner, base = 'HEAD'): Promise<FileChange[]> {
   const nameStatus = await git.run(['diff', '--name-status', '--no-renames', '-z', base]);
@@ -47,7 +49,49 @@ export async function listChanges(git: GitRunner, base = 'HEAD'): Promise<FileCh
     });
   }
 
+  await findRenames(git, base, changes);
   return [...changes.values()].sort((a, b) => a.path.localeCompare(b.path));
+}
+
+/**
+ * Pairs deleted and new files that git sees as renames, replacing each pair with one renamed file.
+ * New files may be untracked, so git compares them in a private index holding just those paths.
+ */
+async function findRenames(git: GitRunner, base: string, changes: Map<string, FileChange>): Promise<void> {
+  const of = (type: ChangeType) => [...changes.values()].filter((c) => c.changeType === type && !c.path.endsWith('/')).map((c) => c.path);
+  const deleted = of('deleted');
+  const added = of('added');
+  if (deleted.length === 0 || added.length === 0) {
+    return;
+  }
+  const indexFile = path.resolve(git.cwd, (await git.run(['rev-parse', '--git-path', 'sift/rename-index'])).trim());
+  await fs.mkdir(path.dirname(indexFile), { recursive: true });
+  const env = { GIT_INDEX_FILE: indexFile };
+  try {
+    await git.run(['read-tree', base], { env });
+    await git.run(['add', '-A', '--pathspec-from-file=-', '--pathspec-file-nul'], { input: [...deleted, ...added].join('\0') + '\0', env });
+    const args = ['diff', '--cached', '--find-renames', '-z', base];
+    const counts = parseNumstat(await git.run([...args, '--numstat'], { env }));
+    for (const entry of parseNameStatus(await git.run([...args, '--name-status'], { env }))) {
+      const old = entry.oldPath ? changes.get(entry.oldPath) : undefined;
+      const fresh = changes.get(entry.path);
+      if (entry.changeType !== 'renamed' || old?.changeType !== 'deleted' || fresh?.changeType !== 'added') {
+        continue;
+      }
+      const count = counts.get(entry.path);
+      changes.delete(entry.oldPath!);
+      changes.set(entry.path, {
+        path: entry.path,
+        changeType: 'renamed',
+        oldPath: entry.oldPath,
+        adds: count?.adds ?? null,
+        dels: count?.dels ?? null,
+        binary: count?.binary ?? fresh.binary,
+      });
+    }
+  } finally {
+    await fs.rm(indexFile, { force: true });
+  }
 }
 
 export async function currentHead(git: GitRunner): Promise<string> {
@@ -154,7 +198,7 @@ export async function commitPaths(git: GitRunner, paths: string[], message: stri
  */
 export async function discardEntries(
   git: GitRunner,
-  entries: Array<{ path: string; changeType: ChangeType; content?: string }>,
+  entries: Array<{ path: string; changeType: ChangeType; oldPath?: string; content?: string }>,
 ): Promise<void> {
   // A new folder in the list is another repository (git lists those as "folder/"): never delete one.
   for (const entry of entries.filter((e) => e.changeType === 'added' && e.content === undefined)) {
@@ -167,9 +211,13 @@ export async function discardEntries(
     const full = path.join(git.cwd, ...entry.path.split('/'));
     if (entry.content !== undefined) {
       await fs.writeFile(full, entry.content, 'utf8');
-    } else if (entry.changeType === 'added') {
+    } else if (entry.changeType === 'added' || entry.changeType === 'renamed') {
       await git.exec(['rm', '-q', '-f', '--cached', '--ignore-unmatch', '--', `:(literal)${entry.path}`], { okCodes: [0, 128] });
       await fs.rm(full, { force: true });
+      if (entry.oldPath) {
+        // A renamed file goes back to its old name, as it is in HEAD.
+        await git.run(['restore', '--source=HEAD', '--staged', '--worktree', '--', `:(literal)${entry.oldPath}`]);
+      }
     } else {
       await git.run(['restore', '--source=HEAD', '--staged', '--worktree', '--', `:(literal)${entry.path}`]);
     }
@@ -255,7 +303,7 @@ export async function branchStatus(git: GitRunner): Promise<BranchStatus> {
 
 /** The files a commit changed compared with its first parent (or with nothing, for a root commit). */
 export async function commitChanges(git: GitRunner, sha: string): Promise<FileChange[]> {
-  const base = ['diff-tree', '-r', '--root', '--no-commit-id', '--no-renames', '-z'];
+  const base = ['diff-tree', '-r', '--root', '--no-commit-id', '--find-renames', '-z'];
   const nameStatus = await git.run([...base, '--name-status', sha]);
   const counts = parseNumstat(await git.run([...base, '--numstat', sha]));
   return parseNameStatus(nameStatus).map((entry) => {
@@ -263,6 +311,7 @@ export async function commitChanges(git: GitRunner, sha: string): Promise<FileCh
     return {
       path: entry.path,
       changeType: entry.changeType,
+      ...(entry.oldPath ? { oldPath: entry.oldPath } : {}),
       adds: count?.adds ?? null,
       dels: count?.dels ?? null,
       binary: count?.binary ?? false,
@@ -273,13 +322,24 @@ export async function commitChanges(git: GitRunner, sha: string): Promise<FileCh
 interface NameStatusEntry {
   path: string;
   changeType: ChangeType;
+  oldPath?: string;
 }
 
 function parseNameStatus(output: string): NameStatusEntry[] {
   const tokens = splitNul(output);
   const entries: NameStatusEntry[] = [];
-  for (let i = 0; i + 1 < tokens.length; i += 2) {
-    entries.push({ path: tokens[i + 1], changeType: toChangeType(tokens[i]) });
+  for (let i = 0; i + 1 < tokens.length; ) {
+    const status = tokens[i];
+    if (status.startsWith('R') && i + 2 < tokens.length) {
+      entries.push({ path: tokens[i + 2], changeType: 'renamed', oldPath: tokens[i + 1] });
+      i += 3;
+    } else if (status.startsWith('C') && i + 2 < tokens.length) {
+      entries.push({ path: tokens[i + 2], changeType: 'added' });
+      i += 3;
+    } else {
+      entries.push({ path: tokens[i + 1], changeType: toChangeType(status) });
+      i += 2;
+    }
   }
   return entries;
 }
@@ -302,9 +362,15 @@ interface LineCount {
 
 function parseNumstat(output: string): Map<string, LineCount> {
   const counts = new Map<string, LineCount>();
-  for (const record of splitNul(output)) {
-    const [adds, dels, ...rest] = record.split('\t');
-    const filePath = rest.join('\t');
+  const tokens = splitNul(output);
+  for (let i = 0; i < tokens.length; i++) {
+    const [adds, dels, ...rest] = tokens[i].split('\t');
+    let filePath = rest.join('\t');
+    if (!filePath && rest.length > 0) {
+      // A rename: the old and the new path follow.
+      filePath = tokens[i + 2] ?? '';
+      i += 2;
+    }
     if (!filePath) {
       continue;
     }
@@ -352,8 +418,15 @@ async function exists(filePath: string): Promise<boolean> {
   );
 }
 
-/** Unified diff of one file against HEAD; untracked files come back as all-added. */
-export async function fileDiff(git: GitRunner, filePath: string, maxBytes = 200_000): Promise<string> {
+/**
+ * Unified diff of one file against HEAD; untracked files come back as all-added, and a renamed file
+ * is compared with its old name.
+ */
+export async function fileDiff(git: GitRunner, filePath: string, maxBytes = 200_000, oldPath?: string): Promise<string> {
+  if (oldPath) {
+    const blob = (await git.run(['hash-object', '-w', '--', filePath])).trim();
+    return git.run(['diff', '--no-color', `HEAD:${oldPath}`, blob]);
+  }
   const tracked = await git.run(['diff', '--no-color', '--no-renames', 'HEAD', '--', filePath]);
   if (tracked.trim()) {
     return tracked;

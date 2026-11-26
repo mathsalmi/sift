@@ -102,7 +102,7 @@ export interface PlanFile {
 export function planPrompt(repoName: string, files: PlanFile[]): string {
   let budget = MAX_DIFF_CHARS_TOTAL;
   const list = files
-    .map(({ file }) => `- ${file.path} (${file.changeType}${file.binary ? ', binary' : ''}, +${file.adds ?? '?'} -${file.dels ?? '?'})`)
+    .map(({ file }) => `- ${file.path} (${file.oldPath ? `renamed from ${file.oldPath}` : file.changeType}${file.binary ? ', binary' : ''}, +${file.adds ?? '?'} -${file.dels ?? '?'})`)
     .join('\n');
   const diffs = files
     .map(({ file, diff }) => {

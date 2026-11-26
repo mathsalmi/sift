@@ -175,6 +175,53 @@ describe('splitting a file across commits', () => {
   });
 });
 
+describe('renames', () => {
+  const body = lines((i) => (i === 5 ? 'five' : null));
+
+  it('shows a renamed file once, keeps its place in the plan, and commits and discards both names', async () => {
+    repo.write('b.txt', 'b2\n');
+    repo.write('a.txt', body);
+    await controller.startReview();
+    await controller.setPlan({ commits: [{ message: 'A', files: ['a.txt'] }, { message: 'B', files: ['b.txt'] }] });
+    const model = controller.review!;
+    const [a] = model.commitsInOrder().map((c) => c.id);
+
+    // Renamed after planning (not staged, as an AI would do it): still A's file, under its new name.
+    repo.remove('a.txt');
+    repo.write('c.txt', body);
+    await controller.refresh();
+    expect(model.state.files.map((f) => [f.path, f.changeType, f.oldPath, f.commitId])).toEqual([
+      ['c.txt', 'renamed', 'a.txt', a],
+      ['b.txt', 'modified', undefined, expect.any(String)],
+    ]);
+
+    // A plan may name it by its old path.
+    await controller.setPlan({ commits: [{ message: 'A', files: ['a.txt'] }, { message: 'B', files: ['b.txt'] }] });
+    expect(model.findFile('c.txt')!.commitId).toBe(model.commitsInOrder()[0].id);
+
+    // Its diff compares it with the old name in HEAD.
+    await controller.openDiff('c.txt');
+    const diff = executed.filter((e) => e.id === 'vscode.diff').at(-1)!.args as [Uri, Uri, string];
+    expect([diff[0].path, diff[0].query]).toEqual(['/a.txt', 'HEAD']);
+
+    await controller.discard(['c.txt']);
+    expect(read('a.txt')).toBe(lines());
+    expect(() => read('c.txt')).toThrow();
+
+    repo.remove('a.txt');
+    repo.write('c.txt', body);
+    await controller.refresh();
+    // Discarding emptied A, so plan it again.
+    await controller.setPlan({ commits: [{ message: 'A', files: ['c.txt'] }, { message: 'B', files: ['b.txt'] }] });
+    const commit = model.findFile('c.txt')!.commitId!;
+    await controller.setStatus(['c.txt'], 'done');
+    await controller.commitCommits([commit]);
+    expect(repo.git('show', '--name-status', '--format=', '-M', 'HEAD').trim()).toMatch(/^R\d+\ta\.txt\tc\.txt$/);
+    expect(model.getCommit(commit).status).toBe('committed');
+    expect(model.filesOf(commit)).toMatchObject([{ path: 'c.txt', changeType: 'renamed', oldPath: 'a.txt' }]);
+  });
+});
+
 describe('discard', () => {
   it('puts files back as in HEAD and deletes new ones', async () => {
     await planned();

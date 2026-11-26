@@ -2,7 +2,7 @@ export type FileStatus = 'todo' | 'in-progress' | 'done';
 export type CommitStatus = 'planned' | 'in-review' | 'committed';
 /** Derived from the files: none approved, some approved, all approved; or already committed. */
 export type CommitReviewStatus = 'todo' | 'in-progress' | 'approved' | 'committed';
-export type ChangeType = 'added' | 'modified' | 'deleted';
+export type ChangeType = 'added' | 'modified' | 'deleted' | 'renamed';
 export type IterationAuthor = 'initial' | 'ai' | 'user';
 export type ThreadKind = 'comment' | 'explanation';
 /** sent = the AI is working on it. */
@@ -51,8 +51,10 @@ export interface ReviewFile {
   changedSinceApproval?: boolean;
   /** With `changedSinceApproval`: git's content id of what was approved, to diff against what changed since. */
   approvedBefore?: string;
-  /** Derived from git, never saved (as are the line counts and `binary`). */
+  /** Derived from git, never saved (as are the line counts, `binary` and `oldPath`). */
   changeType: ChangeType;
+  /** For a renamed file: its path in HEAD. */
+  oldPath?: string;
   adds: number | null;
   dels: number | null;
   binary: boolean;

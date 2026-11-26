@@ -435,6 +435,10 @@ export class ReviewController implements vscode.Disposable {
           ? { path: file.path, content: await this.partText(file.path, file.commitId, true) }
           : { path: file.path },
       );
+      if (file.oldPath) {
+        // A rename commits the old name's deletion with the new file.
+        entries.push({ path: file.oldPath });
+      }
     }
     return entries;
   }
@@ -619,12 +623,12 @@ export class ReviewController implements vscode.Disposable {
     if (files.length === 0) {
       throw new Error('Nothing to discard: these files have no uncommitted changes.');
     }
-    const entries: Array<{ path: string; changeType: ReviewFile['changeType']; content?: string }> = [];
+    const entries: Array<{ path: string; changeType: ReviewFile['changeType']; oldPath?: string; content?: string }> = [];
     for (const file of files) {
       entries.push(
         model.isSplit(file.path)
           ? { path: file.path, changeType: file.changeType, content: await this.partText(file.path, file.commitId, false) }
-          : { path: file.path, changeType: file.changeType },
+          : { path: file.path, changeType: file.changeType, oldPath: file.oldPath },
       );
     }
     await discardEntries(this.git, entries);
@@ -848,7 +852,9 @@ export class ReviewController implements vscode.Disposable {
     const latest = versions.at(-1);
     const previous = versions.at(-2);
 
-    let left = snapshotUri('HEAD', filePath);
+    // A renamed file is compared with its old name in HEAD.
+    const head = snapshotUri('HEAD', file.oldPath ?? filePath);
+    let left = head;
     let right = workingTree;
     let title = `${name} (HEAD ↔ working tree)`;
 
@@ -858,7 +864,7 @@ export class ReviewController implements vscode.Disposable {
       if (from === undefined || to === undefined) {
         throw new Error('Unknown version.');
       }
-      left = from ? snapshotUri(from.treeSha, filePath) : snapshotUri('HEAD', filePath);
+      left = from ? snapshotUri(from.treeSha, filePath) : head;
       right = to ? snapshotUri(to.treeSha, filePath) : workingTree;
       title = `${name} (${from ? version(from.n) : 'HEAD'} ↔ ${to ? version(to.n) : 'now'})`;
     } else if (this.diffMode === 'round' && file.changedSinceApproval && file.approvedBefore && (await this.hasApproved(file.approvedBefore))) {
@@ -968,7 +974,7 @@ export class ReviewController implements vscode.Disposable {
 
   /** Unified diff of a file against HEAD. */
   async diffOf(filePath: string): Promise<string> {
-    return fileDiff(this.git, filePath);
+    return fileDiff(this.git, filePath, undefined, this.model?.findFile(filePath)?.oldPath);
   }
 
   async readLines(filePath: string): Promise<string[]> {

@@ -51,7 +51,7 @@ Sift is a VS Code extension in which the user reviews uncommitted changes as a p
 }
 \`\`\`
 
-- \`files\`: repo-relative paths exactly as git lists them; only files git lists as changed. Each file in one commit, unless you split it (below). Files you leave out go to Unassigned.
+- \`files\`: repo-relative paths exactly as git lists them; only files git lists as changed. A renamed file is one file under its new path (its old path works too) and moves whole. Each file in one commit, unless you split it (below). Files you leave out go to Unassigned.
 - \`message\`: imperative subject line, at most 72 characters; a body may follow after a blank line.
 - \`dependsOn\` (optional): 1-based positions of earlier commits in this plan that this one needs.
 - \`explanations\` (optional): notes shown on the diff. \`path\` must be one of the commit's files; \`line\` is 1-based in the current file. Put them only on lines that carry intent or risk, not on imports or renames.

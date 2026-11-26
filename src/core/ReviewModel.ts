@@ -396,6 +396,18 @@ export class ReviewModel {
     const outcome = emptyOutcome();
     const changed = new Map(facts.changes.map((c) => [c.path, c]));
 
+    // A file renamed since it was planned keeps its place in the plan, under its new name.
+    for (const change of facts.changes) {
+      if (change.oldPath && !this.state.files.some((f) => f.path === change.path)) {
+        for (const file of this.state.files.filter((f) => f.path === change.oldPath && !this.isCommittedFile(f))) {
+          file.path = change.path;
+          file.hunks = undefined;
+        }
+        for (const thread of this.state.threads.filter((t) => t.path === change.oldPath)) {
+          thread.path = change.path;
+        }
+      }
+    }
     for (const commit of this.commitsInOrder()) {
       const subject = commit.message.split('\n')[0].trim();
       const wasCommitted = commit.status === 'committed';
@@ -455,6 +467,7 @@ export class ReviewModel {
       const parts = split && hunks && hunks.length > 0 ? this.settleParts(merged, hunks, outcome) : collapse(merged);
       for (const file of parts) {
         file.changeType = change.changeType;
+        file.oldPath = change.oldPath;
         file.binary = change.binary;
         if (!file.part) {
           file.adds = change.adds;
@@ -586,6 +599,27 @@ export class ReviewModel {
     return parts;
   }
 
+  /** The plan with renamed files listed by their old name moved to their new one. */
+  private withNewNames(plan: PlanInput): PlanInput {
+    const renamed = new Map(this.state.files.filter((f) => f.oldPath && !this.isCommittedFile(f)).map((f) => [f.oldPath!, f.path]));
+    if (renamed.size === 0) {
+      return plan;
+    }
+    const rename = (p: unknown) => (typeof p === 'string' && !this.findFile(p) && renamed.get(p)) || p;
+    return {
+      ...plan,
+      commits: plan.commits.map((commit) =>
+        !commit || !Array.isArray(commit.files)
+          ? commit
+          : {
+              ...commit,
+              files: commit.files.map((f) => (typeof f === 'string' ? (rename(f) as string) : f && { ...f, path: rename(f.path) as string })),
+              explanations: Array.isArray(commit.explanations) ? commit.explanations.map((n) => n && { ...n, path: rename(n.path) as string }) : commit.explanations,
+            },
+      ),
+    };
+  }
+
   /** Paths of files that left the working tree's changes while their commit isn't known as committed. */
   pathsToTrace(changedPaths: Set<string>, inHistory: Map<string, string>): string[] {
     const paths = this.state.files
@@ -606,6 +640,7 @@ export class ReviewModel {
       const change = byPath.get(file.path);
       if (change) {
         file.changeType = change.changeType;
+        file.oldPath = change.oldPath;
         file.adds = change.adds;
         file.dels = change.dels;
         file.binary = change.binary;
@@ -629,6 +664,7 @@ export class ReviewModel {
     if (!plan || !Array.isArray(plan.commits)) {
       throw new Error('Plan must have a "commits" array.');
     }
+    plan = this.withNewNames(plan);
 
     // Where the plan puts each file: commit index, and the line ranges of a part.
     const mentions = new Map<string, Array<{ index: number; lines?: Array<[number, number]> }>>();
@@ -1520,6 +1556,7 @@ function newFile(change: FileChange): ReviewFile {
     commitId: null,
     status: 'todo',
     changeType: change.changeType,
+    ...(change.oldPath ? { oldPath: change.oldPath } : {}),
     adds: change.adds,
     dels: change.dels,
     binary: change.binary,

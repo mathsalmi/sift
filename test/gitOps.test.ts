@@ -101,6 +101,23 @@ describe('commitEntries / discardEntries', () => {
   });
 });
 
+describe('listChanges', () => {
+  it('pairs a deleted file and a new one with the same content as a rename, staged or not', async () => {
+    repo.remove('a.txt');
+    repo.write('moved/a.txt', lines(30, (i) => (i === 3 ? 'three' : null)));
+    repo.git('mv', 'b.txt', 'c.txt');
+    repo.write('other.txt', 'other\n');
+
+    expect(await listChanges(git)).toEqual([
+      { path: 'c.txt', changeType: 'renamed', oldPath: 'b.txt', adds: 0, dels: 0, binary: false },
+      { path: 'moved/a.txt', changeType: 'renamed', oldPath: 'a.txt', adds: 1, dels: 1, binary: false },
+      { path: 'other.txt', changeType: 'added', adds: 1, dels: 0, binary: false },
+    ]);
+    // The user's index is left alone.
+    expect(repo.git('diff', '--cached', '--name-status', '--no-renames').trim().split('\n')).toEqual(['D\tb.txt', 'A\tc.txt']);
+  });
+});
+
 describe('undoCommits / revertCommit', () => {
   it('puts the commits back as changes and keeps what the user staged', async () => {
     const base = repo.git('rev-parse', 'HEAD').trim();

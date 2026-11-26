@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { cpSync, existsSync, readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { GitRunner } from '../src/git/GitRunner';
@@ -76,6 +76,27 @@ describe('commitEntries / discardEntries', () => {
     expect((await listChanges(git)).map((c) => c.path)).toEqual(['a.txt']);
     expect((await fileHunks(git, 'a.txt')).map((h) => h.key)).toEqual([hunks[1].key]);
     expect(existsSync(path.join(repo.dir, 'new.txt'))).toBe(false);
+  });
+
+  it('never deletes a new folder that holds another repository', async () => {
+    const nested = createRepo({ 'f.txt': 'f\n' });
+    try {
+      cpSync(nested.dir, path.join(repo.dir, 'nested'), { recursive: true });
+    } finally {
+      nested.cleanup();
+    }
+    repo.write('new.txt', 'new\n');
+    expect((await listChanges(git)).map((c) => c.path)).toContain('nested/');
+
+    await expect(
+      discardEntries(git, [
+        { path: 'new.txt', changeType: 'added' },
+        { path: 'nested/', changeType: 'added' },
+      ]),
+    ).rejects.toThrow(/own git repository/);
+
+    expect(existsSync(path.join(repo.dir, 'nested', 'f.txt'))).toBe(true);
+    expect(existsSync(path.join(repo.dir, 'new.txt'))).toBe(true);
   });
 });
 

@@ -156,13 +156,20 @@ export async function discardEntries(
   git: GitRunner,
   entries: Array<{ path: string; changeType: ChangeType; content?: string }>,
 ): Promise<void> {
+  // A new folder in the list is another repository (git lists those as "folder/"): never delete one.
+  for (const entry of entries.filter((e) => e.changeType === 'added' && e.content === undefined)) {
+    const stat = await fs.lstat(path.join(git.cwd, ...entry.path.split('/'))).catch(() => null);
+    if (stat?.isDirectory()) {
+      throw new Error(`${entry.path.replace(/\/$/, '')} is a folder with its own git repository. Sift won't delete it; remove it yourself if you mean to.`);
+    }
+  }
   for (const entry of entries) {
     const full = path.join(git.cwd, ...entry.path.split('/'));
     if (entry.content !== undefined) {
       await fs.writeFile(full, entry.content, 'utf8');
     } else if (entry.changeType === 'added') {
       await git.exec(['rm', '-q', '-f', '--cached', '--ignore-unmatch', '--', `:(literal)${entry.path}`], { okCodes: [0, 128] });
-      await fs.rm(full, { force: true, recursive: true });
+      await fs.rm(full, { force: true });
     } else {
       await git.run(['restore', '--source=HEAD', '--staged', '--worktree', '--', `:(literal)${entry.path}`]);
     }

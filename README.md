@@ -195,12 +195,15 @@ Also in the Sift view and command palette: Plan commits with AI · Choose AI · 
 - **Approve and commit:** catches up with git first. Files you staged yourself show up in the plan like any other change (in Unassigned when new); a commit takes exactly its own files, so anything else you staged stays staged.
 - **Discard plan:** after a confirmation, deletes the review state and snapshot refs. Your files and commits are untouched.
 
-## Limitations and roadmap
+## Limitations
 
-- **Splitting works on changes to existing text files**: new, deleted and binary files move whole.
-- **Renames** show as delete + add.
-- **AI edits are plain file writes**, not editor undo steps. Use the "latest changes" diff or git to review or revert them.
-- **Planned:** reviewing an already-committed range (rebase mode).
+- **Splitting works on changed and new text files**: a new file splits by paragraphs (a block runs through the blank lines after it). Deleted, renamed and binary files move whole.
+- **Renames** are found the way git finds them: a rename with too many changes shows as a deletion and a new file.
+- **AI edits are plain file writes.** Command line AIs (Claude Code, Codex, Gemini CLI) change files themselves, so their edits aren't editor undo steps. Review them with the **Latest changes** diff, whose left side is the version before them, and copy back what you want to keep from there.
+
+## Roadmap
+
+- **Review commits already made:** go through a range of existing commits the same way (a rebase mode), after 1.0.
 
 ## Development
 

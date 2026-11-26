@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { GitRunner } from '../src/git/GitRunner';
 import { amendInto, branchStatus, commitEntries, discardEntries, listChanges } from '../src/git/changes';
+import { undoCommits } from '../src/git/history';
 import { applyHunks, fileHunks, headText, hunkTouches, parseHunks } from '../src/git/hunks';
 import { createRepo, type TempRepo } from './helpers';
 
@@ -97,6 +98,25 @@ describe('commitEntries / discardEntries', () => {
 
     expect(existsSync(path.join(repo.dir, 'nested', 'f.txt'))).toBe(true);
     expect(existsSync(path.join(repo.dir, 'new.txt'))).toBe(true);
+  });
+});
+
+describe('undoCommits', () => {
+  it('puts the commits back as changes and keeps what the user staged', async () => {
+    const base = repo.git('rev-parse', 'HEAD').trim();
+    repo.write('b.txt', 'b2\n');
+    const first = await commitEntries(git, [{ path: 'b.txt' }], 'b2');
+    repo.write('c.txt', 'c\n');
+    await commitEntries(git, [{ path: 'c.txt' }], 'c');
+    repo.write('a.txt', lines(30, (i) => (i === 1 ? 'one' : null)));
+    repo.git('add', 'a.txt');
+
+    await undoCommits(git, first);
+
+    expect(repo.git('rev-parse', 'HEAD').trim()).toBe(base);
+    expect(repo.git('diff', '--cached', '--name-only').trim()).toBe('a.txt');
+    expect((await listChanges(git)).map((c) => c.path)).toEqual(['a.txt', 'b.txt', 'c.txt']);
+    expect(readFileSync(path.join(repo.dir, 'b.txt'), 'utf8')).toBe('b2\n');
   });
 });
 

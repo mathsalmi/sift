@@ -70,10 +70,19 @@ export async function commitsAfter(git: GitRunner, sha: string): Promise<Array<{
 
 /**
  * Undoes `sha` and every commit after it: HEAD moves to its parent, and their changes go back to the
- * working tree as uncommitted changes (nothing is lost, the index is left empty).
+ * working tree as uncommitted changes. Nothing is lost, and what the user staged stays staged: only
+ * the paths those commits changed, and that the user didn't stage again since, are unstaged.
  */
 export async function undoCommits(git: GitRunner, sha: string): Promise<void> {
-  await git.run(['reset', '--mixed', '--quiet', `${sha}~1`]);
+  const head = (await git.run(['rev-parse', 'HEAD'])).trim();
+  const split = (out: string) => out.split('\0').filter(Boolean);
+  const changed = split(await git.run(['diff', '--name-only', '--no-renames', '-z', `${sha}~1`, head]));
+  const staged = new Set(split(await git.run(['diff', '--cached', '--name-only', '--no-renames', '-z', head])));
+  await git.run(['reset', '--soft', '--quiet', `${sha}~1`]);
+  const unstage = changed.filter((p) => !staged.has(p));
+  if (unstage.length > 0) {
+    await git.run(['reset', '-q', '--pathspec-from-file=-', '--pathspec-file-nul'], { input: unstage.join('\0') + '\0' });
+  }
 }
 
 /** Makes a new commit that undoes `sha`. Returns it. On a conflict, leaves git mid-revert and throws. */

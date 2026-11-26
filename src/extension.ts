@@ -6,6 +6,7 @@ import { migrateAiSettings } from './ai/settings';
 import { registerAgentTools } from './ai/agentTools';
 import { chosenAgents, syncAgentSkills } from './ai/agentSkill';
 import { ReviewController } from './controller/ReviewController';
+import { splittable as canSplit } from './core/ReviewModel';
 import type { FileRef, FileStatus, PlanCommit } from './core/types';
 import { GitRunner } from './git/GitRunner';
 import { SnapshotService } from './git/SnapshotService';
@@ -857,9 +858,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     if (!file) {
       return null;
     }
-    if (file.binary || file.changeType !== 'modified') {
+    if (!canSplit(file)) {
       void vscode.window.showInformationMessage(
-        `Only changes to an existing text file can be split; ${path.posix.basename(file.path)} is ${file.binary ? 'binary' : file.changeType === 'added' ? 'new' : 'deleted'}.`,
+        `Only a text file that is changed or new can be split; ${path.posix.basename(file.path)} is ${file.binary ? 'binary' : file.changeType}.`,
       );
       return null;
     }

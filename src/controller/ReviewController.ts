@@ -2,7 +2,7 @@ import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
 import * as vscode from 'vscode';
-import { approvalKey, emptyOutcome, planSplitPaths, ReviewModel, subjectOf, type SyncOutcome } from '../core/ReviewModel';
+import { approvalKey, emptyOutcome, planSplitPaths, ReviewModel, splittable, subjectOf, type SyncOutcome } from '../core/ReviewModel';
 import { excludedEntries, ignorePaths, trackedPaths, unexcludePatterns, type ExcludeEntry, type IgnoreTarget } from '../git/ignore';
 import type { FileRef, FileStatus, IterationAuthor, PlanCommit, PlanInput, ReviewFile, ReviewThread } from '../core/types';
 import type { GitRunner } from '../git/GitRunner';
@@ -190,7 +190,7 @@ export class ReviewController implements vscode.Disposable {
     const hunks = new Map<string, Hunk[]>();
     for (const filePath of model.hunkPaths()) {
       const change = changes.find((c) => c.path === filePath);
-      if (change && change.changeType === 'modified' && !change.binary) {
+      if (change && splittable(change)) {
         hunks.set(filePath, await fileHunks(this.git, filePath));
       }
     }
@@ -382,10 +382,10 @@ export class ReviewController implements vscode.Disposable {
     await this.persist();
   }
 
-  /** The file's blocks of changes against HEAD (empty for new, deleted and binary files). */
+  /** The file's blocks of changes against HEAD (paragraphs for a new file; empty for deleted and binary files). */
   async hunksOf(filePath: string): Promise<Hunk[]> {
     const file = this.model?.findFile(filePath);
-    if (!file || file.binary || file.changeType !== 'modified') {
+    if (!file || !splittable(file)) {
       return [];
     }
     return fileHunks(this.git, filePath);

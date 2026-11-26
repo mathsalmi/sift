@@ -131,6 +131,48 @@ describe('splitting a file across commits', () => {
     expect(read('a.txt')).toBe(lines((i) => (i === 20 ? 'twenty' : null)));
     expect(controller.review!.pendingEntries('a.txt')).toMatchObject([{ commitId: a, hunks: undefined }]);
   });
+
+  it('splits a new file by paragraphs and commits each part on its own', async () => {
+    const text = 'one\n1\n\n\ntwo\n2\n\nthree\n3';
+    repo.write('new.txt', text);
+    await controller.startReview();
+    // Paragraph 2 starts at line 5, paragraph 3 at line 8; the plan gives paragraph 2 to B.
+    await controller.setPlan({
+      commits: [
+        { message: 'A', files: ['new.txt'] },
+        { message: 'B', files: [{ path: 'new.txt', lines: [6] }] },
+      ],
+    });
+    const model = controller.review!;
+    const [a, b] = model.commitsInOrder().map((c) => c.id);
+    expect((await controller.hunksOf('new.txt')).map((h) => [h.newStart, h.newLines])).toEqual([
+      [1, 4],
+      [5, 3],
+      [8, 2],
+    ]);
+    expect(model.findFile('new.txt', b)).toMatchObject({ part: { own: 1, total: 3 } });
+    expect(await controller.partText('new.txt', a, true)).toBe('one\n1\n\n\nthree\n3');
+
+    await controller.setStatus([{ path: 'new.txt', commitId: a }], 'done');
+    await controller.commitCommits([a]);
+    expect(repo.git('show', 'HEAD:new.txt')).toBe('one\n1\n\n\nthree\n3');
+    expect(read('new.txt')).toBe(text);
+
+    // What's left is B's paragraph, now an ordinary change to the file.
+    expect(model.isSplit('new.txt')).toBe(false);
+    expect(model.pendingEntries('new.txt')).toMatchObject([{ commitId: b, changeType: 'modified' }]);
+    await controller.setStatus([{ path: 'new.txt', commitId: b }], 'done');
+    await controller.commitCommits([b]);
+    expect(repo.git('show', 'HEAD:new.txt')).toBe(text);
+  });
+
+  it('refuses to split deleted files', async () => {
+    repo.remove('b.txt');
+    await controller.startReview();
+    await expect(
+      controller.setPlan({ commits: [{ message: 'A', files: [{ path: 'b.txt', lines: [1] }] }, { message: 'B', files: ['b.txt'] }] }),
+    ).rejects.toThrow(/it is deleted/);
+  });
 });
 
 describe('discard', () => {

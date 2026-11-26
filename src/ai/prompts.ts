@@ -125,7 +125,7 @@ export function planPrompt(repoName: string, files: PlanFile[]): string {
 
 Rules:
 - Every file listed below goes into one commit (or is split, see next rule). Use the paths exactly as listed.
-- When one file holds changes that belong to different commits, split it: in each of those commits list it as {"path": ..., "lines": [[first, last], ...]} with the line numbers (left column) of the changed lines that commit gets, and in one of them as the plain path to take the rest. For removed lines, which have no number, use the number of the line just above them. Only modified text files can be split, and only when their changes really belong apart; most files go whole into one commit.
+- When one file holds changes that belong to different commits, split it: in each of those commits list it as {"path": ..., "lines": [[first, last], ...]} with the line numbers (left column) of the changed lines that commit gets, and in one of them as the plain path to take the rest. For removed lines, which have no number, use the number of the line just above them. Only modified or new text files can be split, and only when their changes really belong apart; most files go whole into one commit. A new file splits by paragraphs: a block runs to the blank lines after it.
 - Order the commits so each builds on the earlier ones (foundations first). Each commit should make sense on its own.
 - message: imperative subject line (max 72 characters); add a body after a blank line only when it helps.
 - intent: what the commit does and why, in 1-2 sentences.

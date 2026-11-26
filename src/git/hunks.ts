@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import { promises as fs } from 'node:fs';
+import * as path from 'node:path';
 import type { GitRunner } from './GitRunner';
 
 /**
@@ -17,10 +19,37 @@ export interface Hunk {
   added: string[];
 }
 
-/** Hunks of a file's changes against HEAD; empty for files git can't diff as text. */
+/**
+ * Hunks of a file's changes against HEAD; empty for files git can't diff as text. A new file (not in
+ * HEAD) gets one block per paragraph instead of a single hunk, so it can be split too.
+ */
 export async function fileHunks(git: GitRunner, filePath: string): Promise<Hunk[]> {
+  const inHead = await git.exec(['cat-file', '-e', `HEAD:${filePath}`], { okCodes: [0, 1, 128] });
+  if (inHead.exitCode !== 0) {
+    const content = await fs.readFile(path.join(git.cwd, ...filePath.split('/'))).catch(() => null);
+    return content && !content.subarray(0, 8000).includes(0) ? paragraphHunks(content.toString('utf8')) : [];
+  }
   const diff = await git.run(['diff', '--no-color', '--no-renames', '--no-ext-diff', '-U0', 'HEAD', '--', `:(literal)${filePath}`]);
   return parseHunks(diff);
+}
+
+/**
+ * The blocks of a new file: each paragraph with the blank lines after it (blank lines at the top
+ * go with the first one). Shaped like hunks that add to an empty file.
+ */
+export function paragraphHunks(text: string): Hunk[] {
+  const lines = splitLines(text);
+  const blank = (line: string) => line.trim() === '';
+  const hunks: Hunk[] = [];
+  let start = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const endsBlock = i === lines.length - 1 || (blank(lines[i]) && !blank(lines[i + 1]) && lines.slice(start, i).some((l) => !blank(l)));
+    if (endsBlock) {
+      hunks.push({ key: '', oldStart: 0, oldLines: 0, newStart: start + 1, newLines: i - start + 1, removed: [], added: lines.slice(start, i + 1) });
+      start = i + 1;
+    }
+  }
+  return withKeys(hunks);
 }
 
 /** The file's text in HEAD; null when HEAD doesn't have it. */
@@ -64,6 +93,11 @@ export function parseHunks(diff: string): Hunk[] {
       last[last.length - 1] = last[last.length - 1].replace(/\n$/, '');
     }
   }
+  return withKeys(hunks);
+}
+
+/** Keys hunks by their content; identical changes get a counter. */
+function withKeys(hunks: Hunk[]): Hunk[] {
   const seen = new Map<string, number>();
   for (const hunk of hunks) {
     const base = createHash('sha1').update(hunk.removed.join('')).update('\0').update(hunk.added.join('')).digest('hex').slice(0, 12);
@@ -77,7 +111,8 @@ export function parseHunks(diff: string): Hunk[] {
 /** Applies some of a file's hunks to its HEAD text. */
 export function applyHunks(base: string, hunks: Hunk[]): string {
   const lines = splitLines(base);
-  for (const hunk of [...hunks].sort((a, b) => b.oldStart - a.oldStart)) {
+  // Last first, so earlier positions stay valid (blocks of a new file all start at 0: by their new line).
+  for (const hunk of [...hunks].sort((a, b) => b.oldStart - a.oldStart || b.newStart - a.newStart)) {
     // With no old lines, oldStart is the line after which the new lines go.
     const at = hunk.oldLines === 0 ? hunk.oldStart : hunk.oldStart - 1;
     lines.splice(at, hunk.oldLines, ...hunk.added);

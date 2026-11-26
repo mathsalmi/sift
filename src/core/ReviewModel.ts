@@ -684,8 +684,8 @@ export class ReviewModel {
         continue;
       }
       const file = this.findFile(filePath)!;
-      if (file.binary || file.changeType !== 'modified') {
-        throw new Error(`Plan splits "${filePath}", but only changes to an existing text file can be split; it is ${file.binary ? 'binary' : file.changeType}.`);
+      if (!splittable(file)) {
+        throw new Error(`Plan splits "${filePath}", but only a text file that is changed or new can be split; it is ${file.binary ? 'binary' : file.changeType}.`);
       }
       if (list.filter((m) => !m.lines).length > 1) {
         throw new Error(`Plan lists "${filePath}" without "lines" in more than one commit; only one listing can take the rest of its changes.`);
@@ -1041,8 +1041,8 @@ export class ReviewModel {
     if (!source || this.isCommittedFile(source)) {
       throw new Error(`${filePath} is not a pending file in this review.`);
     }
-    if (source.binary || source.changeType !== 'modified') {
-      throw new Error(`Only changes to an existing text file can be split; ${filePath} is ${source.binary ? 'binary' : source.changeType}.`);
+    if (!splittable(source)) {
+      throw new Error(`Only a text file that is changed or new can be split; ${filePath} is ${source.binary ? 'binary' : source.changeType}.`);
     }
     const own = new Set(this.ownKeys(source, hunks.map((h) => h.key)));
     const moving = hunks.filter((h) => own.has(h.key) && keys.includes(h.key));
@@ -1460,6 +1460,11 @@ export function approvalKey(file: { path: string; commitId: string | null }): st
 }
 
 /** First line of the commit message. */
+/** Whether a file's changes can be split across commits: a changed or new text file. */
+export function splittable(file: Pick<ReviewFile, 'binary' | 'changeType'>): boolean {
+  return !file.binary && (file.changeType === 'modified' || file.changeType === 'added');
+}
+
 export function subjectOf(commit: PlanCommit): string {
   return commit.message.split('\n')[0].trim();
 }

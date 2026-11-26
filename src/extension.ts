@@ -24,7 +24,7 @@ type TreeNode = PlanNode;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   // Coding agents learn about Sift from a skill, so "plan the commits in Sift" just works there.
-  // Only the agents the user chose get it (by default the one picked in Choose AI).
+  // Only the agents the user chose get it (by default the one picked in Choose AI, nothing before that).
   const syncSkill = () =>
     void syncAgentSkills(chosenAgents(...agentSkillsSettings())).catch(() => undefined);
   syncSkill();
@@ -1447,8 +1447,9 @@ async function openNextTodo(controller: ReviewController, afterPath?: string, ot
  * per machine, so only user settings count: windows with different workspace settings would
  * otherwise keep adding and removing the skill.
  */
-function agentSkillsSettings(): [unknown, string] {
+function agentSkillsSettings(): [unknown, string | undefined] {
   const skills = vscode.workspace.getConfiguration('sift').inspect<string[]>('agentSkills')?.globalValue;
-  const provider = vscode.workspace.getConfiguration('sift.ai').inspect<string>('provider');
-  return [skills, provider?.globalValue ?? provider?.defaultValue ?? 'claude'];
+  // Only an AI the user chose counts, not the setting's default: nothing is installed before that.
+  const provider = vscode.workspace.getConfiguration('sift.ai').inspect<string>('provider')?.globalValue;
+  return [skills, provider];
 }

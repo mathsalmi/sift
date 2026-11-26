@@ -86,9 +86,10 @@ export function skillsDir(agent: SkillAgent, env: NodeJS.ProcessEnv = process.en
 
 /**
  * The agents to install the skill for: the \`sift.agentSkills\` setting when the user set it,
- * otherwise the agent chosen to run Sift's AI (Choose AI), if it is one of them.
+ * otherwise the agent chosen to run Sift's AI (Choose AI), if it is one of them. \`provider\` is
+ * undefined until the user chose an AI: then no agent gets the skill.
  */
-export function chosenAgents(setting: unknown, provider: string): SkillAgent[] {
+export function chosenAgents(setting: unknown, provider: string | undefined): SkillAgent[] {
   if (Array.isArray(setting)) {
     return SKILL_AGENTS.filter((agent) => setting.includes(agent));
   }

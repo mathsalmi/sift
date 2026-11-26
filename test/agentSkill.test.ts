@@ -17,6 +17,9 @@ describe('agent skill', () => {
     expect(chosenAgents(undefined, 'vscode')).toEqual([]);
     expect(chosenAgents(['gemini', 'codex', 'nope'], 'claude')).toEqual(['codex', 'gemini']);
     expect(chosenAgents([], 'claude')).toEqual([]);
+    // No AI chosen yet (the provider setting only has its default): no skill anywhere.
+    expect(chosenAgents(undefined, undefined)).toEqual([]);
+    expect(chosenAgents(['codex'], undefined)).toEqual(['codex']);
   });
 
   it('writes only to the chosen agents, each in its own folder', async () => {

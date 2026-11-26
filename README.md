@@ -9,8 +9,6 @@
 
 When an AI (or you) changes hundreds of files in one go, reviewing a single giant diff doesn't work, and committing it as one blob loses history. Sift asks an AI to split the changes into a plan of atomic commits, with notes on the lines that matter, then walks you through each commit in VS Code's native diff editor. Comment on any line to ask a question or ask for a change, and the answer lands in the same thread. When a commit is right, you approve it and Sift commits exactly those files.
 
-> Status: early (0.3.0). Used daily by its author; not on the Marketplace yet.
-
 ## Features
 
 - **AI commit plan:** one click groups every changed file into ordered, atomic commits, with an intent, risk notes and explanations on the lines that matter. Explanations show open on their lines in the diff; **Show / hide AI explanations** in the diff's Sift menu turns them all off and on. Drag files between commits to adjust.
@@ -53,7 +51,11 @@ Sift also works without AI for manual reviews.
 
 ## Install
 
-Sift isn't on the Marketplace yet. Build and install the `.vsix`:
+Install **Sift** from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=msalmi.sift), or search for "Sift" in the Extensions view.
+
+In other editors built on VS Code (Cursor, Windsurf, VSCodium), download `sift-<version>.vsix` from the [latest release](https://github.com/mathsalmi/sift/releases/latest) and run **Extensions: Install from VSIX**.
+
+To build it from source:
 
 ```bash
 git clone https://github.com/mathsalmi/sift.git
@@ -173,6 +175,13 @@ Also in the Sift view and command palette: Plan commits with AI · Choose AI · 
 | `sift.agentSkills` | not set | Agents that get the `sift` skill: `claude`, `codex`, `gemini`. Not set: the one chosen with Choose AI, none before you choose (see [Coding agents](#coding-agents)) |
 | `sift.stateLocation` | `repo` | `repo`: `.sift/state.json`, excluded via `.git/info/exclude`. `workspaceStorage`: outside the repo. |
 | `sift.snapshotMaxFileSizeMB` | `5` | New files larger than this are left out of snapshots |
+
+## Privacy
+
+- Sift has no telemetry and no server of its own.
+- Your diffs, comments and file contents go only to the AI you chose, through its own command line tool or VS Code's language model API, under that AI's terms. Nothing is sent until you ask the AI to plan or to answer a comment.
+- Sift's files stay local: the review state (`.sift/state.json`, excluded from git, or VS Code's storage with `sift.stateLocation`) and the `sift` skill in your coding agent's skills folder.
+- Your GitHub picture in comments is loaded from GitHub only after you allow Sift to use VS Code's GitHub account.
 
 ## How it works
 

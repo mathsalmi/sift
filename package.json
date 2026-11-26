@@ -4,7 +4,6 @@
   "description": "Plan a large change set into reviewed, atomic commits, and ask the AI of your choice about any line.",
   "publisher": "msalmi",
   "version": "0.3.0",
-  "private": true,
   "license": "MIT",
   "icon": "resources/logo/sift-paper.png",
   "engines": {
@@ -12,7 +11,22 @@
   },
   "categories": [
     "SCM Providers",
+    "AI",
     "Other"
+  ],
+  "keywords": [
+    "git",
+    "commit",
+    "commits",
+    "review",
+    "code review",
+    "atomic commits",
+    "diff",
+    "ai",
+    "claude",
+    "codex",
+    "gemini",
+    "copilot"
   ],
   "main": "./dist/extension.js",
   "activationEvents": [

@@ -91,8 +91,12 @@ export async function revertCommit(git: GitRunner, sha: string): Promise<string>
     await git.run(['revert', '--no-edit', sha]);
   } catch (error) {
     const detail = error instanceof GitError ? error.stderr.trim().split('\n')[0] : (error as Error).message;
+    const gitDir = (await git.run(['rev-parse', '--absolute-git-dir'])).trim();
+    const started = await fs.stat(path.join(gitDir, 'REVERT_HEAD')).then(() => true, () => false);
     throw new Error(
-      `git could not revert ${sha.slice(0, 7)}: ${detail} Resolve it and run "git revert --continue", or "git revert --abort".`,
+      started
+        ? `git could not revert ${sha.slice(0, 7)}: ${detail} Resolve it and run "git revert --continue", or "git revert --abort".`
+        : `git could not revert ${sha.slice(0, 7)}: ${detail} Nothing changed.`,
     );
   }
   return (await git.run(['rev-parse', 'HEAD'])).trim();

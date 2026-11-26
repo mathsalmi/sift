@@ -3,7 +3,7 @@ import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { GitRunner } from '../src/git/GitRunner';
 import { amendInto, branchStatus, commitEntries, discardEntries, listChanges } from '../src/git/changes';
-import { undoCommits } from '../src/git/history';
+import { revertCommit, undoCommits } from '../src/git/history';
 import { applyHunks, fileHunks, headText, hunkTouches, parseHunks } from '../src/git/hunks';
 import { createRepo, type TempRepo } from './helpers';
 
@@ -101,7 +101,7 @@ describe('commitEntries / discardEntries', () => {
   });
 });
 
-describe('undoCommits', () => {
+describe('undoCommits / revertCommit', () => {
   it('puts the commits back as changes and keeps what the user staged', async () => {
     const base = repo.git('rev-parse', 'HEAD').trim();
     repo.write('b.txt', 'b2\n');
@@ -117,6 +117,17 @@ describe('undoCommits', () => {
     expect(repo.git('diff', '--cached', '--name-only').trim()).toBe('a.txt');
     expect((await listChanges(git)).map((c) => c.path)).toEqual(['a.txt', 'b.txt', 'c.txt']);
     expect(readFileSync(path.join(repo.dir, 'b.txt'), 'utf8')).toBe('b2\n');
+  });
+
+  it('says nothing changed when git refuses to start the revert', async () => {
+    repo.write('b.txt', 'b2\n');
+    const sha = await commitEntries(git, [{ path: 'b.txt' }], 'b2');
+    repo.write('a.txt', lines(30, (i) => (i === 1 ? 'one' : null)));
+    repo.git('add', 'a.txt');
+
+    await expect(revertCommit(git, sha)).rejects.toThrow(/Nothing changed/);
+    expect(repo.git('rev-parse', 'HEAD').trim()).toBe(sha);
+    expect(repo.git('diff', '--cached', '--name-only').trim()).toBe('a.txt');
   });
 });
 

@@ -1,4 +1,4 @@
-import { cpSync, existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { GitRunner } from '../src/git/GitRunner';
@@ -80,12 +80,8 @@ describe('commitEntries / discardEntries', () => {
   });
 
   it('never deletes a new folder that holds another repository', async () => {
-    const nested = createRepo({ 'f.txt': 'f\n' });
-    try {
-      cpSync(nested.dir, path.join(repo.dir, 'nested'), { recursive: true });
-    } finally {
-      nested.cleanup();
-    }
+    repo.write('nested/f.txt', 'f\n');
+    repo.git('init', '-q', 'nested');
     repo.write('new.txt', 'new\n');
     expect((await listChanges(git)).map((c) => c.path)).toContain('nested/');
 

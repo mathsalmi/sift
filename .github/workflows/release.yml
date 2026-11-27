@@ -87,8 +87,8 @@ jobs:
       - name: Show the app's Marketplace user ID
         run: |
           az rest --resource 499b84ac-1321-427f-aa17-267ca6975798 \
-            -u "https://app.vssps.visualstudio.com/_apis/profile/profiles/me?api-version=7.1-preview.3" \
-            --query id -o tsv
+            -u "https://app.vssps.visualstudio.com/_apis/connectionData" \
+            --query authenticatedUser.id -o tsv
 
       - name: Publish to the Marketplace
         if: github.event_name == 'release'

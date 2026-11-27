@@ -11,7 +11,7 @@ When an AI (or you) changes hundreds of files in one go, reviewing a single gian
 
 ![Sift planning a change set into commits, explaining a diff, answering a question and committing](https://raw.githubusercontent.com/mathsalmi/sift/main/site/assets/demo.gif)
 
-More on the website: [mathsalmi.github.io/sift](https://mathsalmi.github.io/sift/).
+More on the website: [msalmi.com/sift](https://msalmi.com/sift/).
 
 ## Features
 

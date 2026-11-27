@@ -41,7 +41,7 @@ These come from the owner's feedback. Follow them in every change.
   - **MAJOR** when something users or agents rely on breaks: a removed or renamed command or setting, an incompatible `.sift/plan.json` or `.sift/state.json` format, a changed `sift_*` tool contract.
 - Bump the version in `package.json` in its own commit right before a release, not with each change.
 - There is no `CHANGELOG.md`. The notes live in the GitHub release.
-- To release: create a GitHub release with a tag `v<version>` matching `package.json`, and write the notes there. Tick **Set as a pre-release** for one only opt-in users should get. `.github/workflows/release.yml` builds the `.vsix`, attaches it to the release and publishes to Open VSX when the `OVSX_PAT` secret is set. The Marketplace takes no tokens: the owner uploads the `.vsix` at marketplace.visualstudio.com/manage.
+- To release: create a GitHub release with a tag `v<version>` matching `package.json`, and write the notes there. Tick **Set as a pre-release** for one only opt-in users should get. `.github/workflows/release.yml` builds the `.vsix`, attaches it to the release and publishes it to the Marketplace (signed in as the Entra ID app `sift-publish`, no secret) and to Open VSX when the `OVSX_PAT` secret is set.
 
 ## Code map
 

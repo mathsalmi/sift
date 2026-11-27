@@ -3,7 +3,7 @@
   "displayName": "Git Sift",
   "description": "Plan a large change set into reviewed, atomic commits, and ask the AI of your choice about any line.",
   "publisher": "msalmi",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "license": "MIT",
   "icon": "resources/logo/sift-paper.png",
   "engines": {

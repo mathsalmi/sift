@@ -1,0 +1,13 @@
+{
+  "name": "sift-marketing",
+  "private": true,
+  "type": "module",
+  "description": "Screenshots and demo video of Sift, captured from a real VS Code.",
+  "scripts": {
+    "capture": "node capture.mjs",
+    "frame": "node frame.mjs"
+  },
+  "devDependencies": {
+    "playwright-core": "1.49.1"
+  }
+}

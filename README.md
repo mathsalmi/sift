@@ -9,6 +9,10 @@
 
 When an AI (or you) changes hundreds of files in one go, reviewing a single giant diff doesn't work, and committing it as one blob loses history. Sift asks an AI to split the changes into a plan of atomic commits, with notes on the lines that matter, then walks you through each commit in VS Code's native diff editor. Comment on any line to ask a question or ask for a change, and the answer lands in the same thread. When a commit is right, you approve it and Sift commits exactly those files.
 
+![Sift planning a change set into commits, explaining a diff, answering a question and committing](https://raw.githubusercontent.com/mathsalmi/sift/main/site/assets/demo.gif)
+
+More on the website: [mathsalmi.github.io/sift](https://mathsalmi.github.io/sift/).
+
 ## Features
 
 - **AI commit plan:** one click groups every changed file into ordered, atomic commits, with an intent, risk notes and explanations on the lines that matter. Explanations show open on their lines in the diff; **Show / hide AI explanations** in the diff's Sift menu turns them all off and on. Drag files between commits to adjust.
@@ -38,6 +42,18 @@ When an AI (or you) changes hundreds of files in one go, reviewing a single gian
 - **Undo or revert:** a committed commit not pushed yet has **Undo commit**: its changes (and those of any commit made after it) go back to the working tree and the plan, approvals kept. A pushed commit has **Revert commit**, which makes a new commit that undoes it.
 - **Review status:** files are reviewed as part of a commit: unassigned ones have no checkbox until you move them into one. Tick a file's checkbox to approve it. Sift asks first when the file still has unresolved comments. A commit is **To do** until one file is approved, **In progress** while some are, and **Approved** when all are. Files that change after you approved them go back to In progress.
 - **You stay in control:** the AI never stages or commits. Only your Approve click commits, with your git identity and hooks.
+
+## Screenshots
+
+![A commit plan in one click](https://raw.githubusercontent.com/mathsalmi/sift/main/site/assets/framed/plan.png)
+
+![Every change, explained where it happens](https://raw.githubusercontent.com/mathsalmi/sift/main/site/assets/framed/explain.png)
+
+![Ask about any line](https://raw.githubusercontent.com/mathsalmi/sift/main/site/assets/framed/ask.png)
+
+![One file, two commits](https://raw.githubusercontent.com/mathsalmi/sift/main/site/assets/framed/split.png)
+
+![Approve, commit, push](https://raw.githubusercontent.com/mathsalmi/sift/main/site/assets/framed/commit.png)
 
 ## Requirements
 

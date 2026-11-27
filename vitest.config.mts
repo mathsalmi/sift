@@ -9,5 +9,7 @@ export default defineConfig({
   },
   test: {
     include: ['test/**/*.test.ts'],
+    // The end-to-end tests run many git commands; Windows runners are slow at that.
+    testTimeout: 30_000,
   },
 });

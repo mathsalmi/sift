@@ -2,19 +2,23 @@ name: Release
 
 # Runs when a GitHub release is published. The release's tag must be v<version>, matching
 # package.json, and its notes are the changelog. A release marked as a pre-release is built as one.
-# The workflow builds the .vsix and attaches it to the release. Upload that file on
-# https://marketplace.visualstudio.com/manage (the Marketplace no longer takes tokens).
-# It also publishes to Open VSX when the OVSX_PAT secret is set.
+# The workflow builds the .vsix, attaches it to the release and publishes it:
+# - to the Marketplace when the AZURE_CLIENT_ID and AZURE_TENANT_ID variables are set. They name
+#   an Entra ID app that signs in from the `marketplace` environment and is a member of the publisher.
+# - to Open VSX when the OVSX_PAT secret is set.
+# Run it by hand to print the app's Marketplace user ID, which is what Members > Add asks for.
 
 on:
   release:
     types: [published]
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
   release:
+    if: github.event_name == 'release'
     runs-on: ubuntu-latest
     env:
       TAG: ${{ github.event.release.tag_name }}
@@ -62,3 +66,34 @@ jobs:
           flags=""
           if [ "$PRE" = true ]; then flags="--pre-release"; fi
           npx --yes ovsx publish "git-sift-${TAG#v}.vsix" -p "$OVSX_PAT" $flags
+
+  marketplace:
+    needs: release
+    if: ${{ !failure() && !cancelled() && vars.AZURE_CLIENT_ID != '' }}
+    runs-on: ubuntu-latest
+    environment: marketplace
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      TAG: ${{ github.event.release.tag_name }}
+    steps:
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+
+      - name: Show the app's Marketplace user ID
+        run: |
+          az rest --resource 499b84ac-1321-427f-aa17-267ca6975798 \
+            -u "https://app.vssps.visualstudio.com/_apis/profile/profiles/me?api-version=7.1-preview.3" \
+            --query id -o tsv
+
+      - name: Publish to the Marketplace
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "$TAG" -R "$GITHUB_REPOSITORY" -p "git-sift-${TAG#v}.vsix"
+          npx --yes @vscode/vsce@3 publish --packagePath "git-sift-${TAG#v}.vsix" --azure-credential

@@ -147,6 +147,17 @@ function saveVideo() {
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
   // Leave out the cuts: frames inside one go, except the last, which shows from the end of the cut.
+  // Merge overlapping cuts (one inside another) so no stretch is removed twice.
+  const merged = [];
+  for (const [start, end] of [...cuts].sort((a, b) => a[0] - b[0])) {
+    const last = merged.at(-1);
+    if (last && start <= last[1]) {
+      last[1] = Math.max(last[1], end);
+    } else {
+      merged.push([start, end]);
+    }
+  }
+  cuts.splice(0, cuts.length, ...merged);
   const kept = [];
   for (const frame of frames) {
     const cut = cuts.find(([start, end]) => frame.time > start && frame.time <= end);
@@ -185,11 +196,56 @@ function saveVideo() {
 
 const pause = (ms = 800) => page.waitForTimeout(ms);
 let shot = 0;
+/** Saves a screenshot without the video's caption. */
 async function screenshot(name) {
   shot++;
   const file = path.join(out, `${String(shot).padStart(2, '0')}-${name}.png`);
-  await page.screenshot({ path: file });
+  await offCamera(async () => {
+    await page.evaluate(() => document.getElementById('sift-demo-caption')?.style.setProperty('visibility', 'hidden'));
+    await page.screenshot({ path: file });
+    // Wait for a frame with the caption back, so the video doesn't hold the frame without it.
+    const before = frames.length;
+    await page.evaluate(() => document.getElementById('sift-demo-caption')?.style.removeProperty('visibility'));
+    for (let i = 0; i < 40 && frames.length === before; i++) {
+      await page.waitForTimeout(50);
+    }
+  });
   step(`Saved ${path.relative(here, file)}`);
+}
+
+/** Lets the viewer take in what's on screen. */
+const hold = (ms = 3000) => page.waitForTimeout(ms);
+
+/** Shows a step's caption over the window, for the video only (screenshots leave it out). */
+async function caption(number, text) {
+  await page.evaluate(
+    ([number, text]) => {
+      let box = document.getElementById('sift-demo-caption');
+      if (!box) {
+        box = document.createElement('div');
+        box.id = 'sift-demo-caption';
+        Object.assign(box.style, {
+          position: 'fixed', left: '50%', bottom: '44px', transform: 'translateX(-50%)', zIndex: '100000',
+          display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 22px 12px 12px', borderRadius: '999px',
+          background: '#f5f4f0', color: '#1e1c1a', boxShadow: '0 12px 32px rgba(0,0,0,.45), 0 0 0 1px rgba(0,0,0,.2)',
+          font: '600 19px/1.2 -apple-system, "Helvetica Neue", Arial, sans-serif', letterSpacing: '-0.01em',
+          whiteSpace: 'nowrap', pointerEvents: 'none', transition: 'opacity .25s ease',
+        });
+        const badge = document.createElement('span');
+        Object.assign(badge.style, {
+          display: 'grid', placeItems: 'center', width: '30px', height: '30px', borderRadius: '50%',
+          background: '#c2410c', color: '#fff', font: '700 15px/1 -apple-system, Arial, sans-serif',
+        });
+        const label = document.createElement('span');
+        box.append(badge, label);
+        document.body.append(box);
+      }
+      box.firstChild.textContent = String(number);
+      box.firstChild.style.display = number ? 'grid' : 'none';
+      box.lastChild.textContent = text;
+    },
+    [number, text],
+  );
 }
 
 /** Runs the script's own moves (scrolling, tidying up) and leaves them out of the video. */
@@ -271,78 +327,95 @@ async function dragSash(by) {
 }
 
 try {
-  // The changes as they are: a mix of a feature, a fix and a move.
+  // 1. The clutter: everything the AI changed, in Unassigned.
   step('Opening Sift');
-  await page.locator('.part.activitybar [aria-label^="Sift"]').first().click();
-  await pause(800);
-  await widenSideBar(150);
-  await expandAll();
-  await pause(1200);
+  await offCamera(async () => {
+    await page.locator('.part.activitybar [aria-label^="Sift"]').first().click();
+    await pause(800);
+    await dragSash(150);
+    await command('Sift: Plan commits manually');
+    await pause(800);
+    await command('Sift: Expand all');
+    await pause(800);
+    await command('Notifications: Clear All Notifications');
+  });
+  await caption(1, 'Your AI changed 9 files at once. Sift lists them in Unassigned.');
+  await hold(4000);
   await screenshot('changes');
 
-  // One click: the AI plans the commits.
+  // 2. One click: the AI plans the commits.
   step('Planning with AI');
+  await caption(2, 'Click “Plan commits with AI”');
+  await hold(1500);
   await titleButton('Plan commits with AI');
   await pause(1000);
   await screenshot('planning');
   await page.waitForSelector('.part.sidebar .monaco-list-row:has-text("Limit requests per client")', { timeout: 30_000 });
-  await pause(800);
   await expandAll();
-  await pause(1200);
+  await caption(2, 'The AI groups them into three small commits, in order');
+  await hold(4000);
   await screenshot('plan');
   await clearNotifications();
 
-  // The rate limiter's diff, with the AI's explanations open on its lines.
+  // 3. The diff, with the AI's explanations open on its lines.
   step('Opening a diff with explanations');
+  await caption(3, 'Open a file: the AI explains the lines that matter');
   await row('server.ts').click();
   await page.waitForSelector('.monaco-diff-editor', { timeout: 15_000 });
-  await pause(1500);
+  await pause(1200);
   await hidePanel();
   await goToLine(lineOf('src/server.ts', 'if (!allow(req, res))') + 6);
-  await pause(1200);
+  await hold(3500);
   await screenshot('explanation');
 
   await row('rateLimit.ts').click();
-  await pause(1500);
+  await pause(1200);
   await hidePanel();
   await goToLine(lineOf('src/middleware/rateLimit.ts', 'if (bucket.tokens < 1)') + 4);
-  await pause(1200);
+  await hold(3500);
   await screenshot('explanations');
 
-  // Ask about a line: the answer lands in the same thread.
+  // 4. Ask about a line: the answer lands in the same thread.
   step('Asking the AI about a line');
   await goToLine(lineOf('src/middleware/rateLimit.ts', 'const buckets = new Map'));
+  await caption(4, 'Ask about any line');
   await offCamera(() => command('Comments: Add Comment on Current Selection'));
-  await pause(600);
-  await page.keyboard.type('Does this map grow forever when many clients call us?', { delay: 25 });
-  await pause(500);
+  await pause(800);
+  await page.keyboard.type('Does this map grow forever when many clients call us?', { delay: 45 });
+  await hold(1500);
   await screenshot('question');
   await page.keyboard.press('Meta+Enter'); // Ask AI
   await pause(1200);
   await screenshot('thinking');
   await page.getByText('It stays bounded').first().waitFor({ timeout: 30_000 });
-  await pause(1500);
   await hidePanel();
+  await caption(4, 'The answer lands in the same thread');
+  await hold(5000);
   await screenshot('answer');
 
-  // One file split across two commits: each part has its own diff.
+  // 5. One file split across two commits: each part has its own diff.
   step('Showing a split file');
+  await caption(5, 'One file, two commits: each part has its own diff');
   await row('2 of 3 changes').click();
-  await pause(1800);
+  await pause(1200);
   await hidePanel();
+  await hold(4000);
   await screenshot('split');
 
-  // Approve the first commit's files and commit it.
+  // 6. Approve the first commit's files and commit it.
   step('Approving and committing');
+  await caption(6, 'Approve the files of a commit…');
+  await hold(1200);
   for (const text of ['format.ts', '1 of 3 changes', 'users.ts']) {
     await row(text).locator('.custom-view-tree-node-item-checkbox').click();
-    await pause(500);
+    await pause(700);
   }
-  await pause(800);
+  await hold(1500);
   await screenshot('approved');
+  await caption(6, '…and commit them. The next commit goes into review.');
   await titleButton('Commit approved commits');
   await page.waitForSelector('.part.sidebar .monaco-list-row:has-text("Committed")', { timeout: 30_000 });
-  await pause(1500);
+  await hold(4500);
   await screenshot('committed');
 } catch (error) {
   await screenshot('error');

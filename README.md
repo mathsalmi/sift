@@ -6,7 +6,7 @@
 
 Sift asks an AI to plan your uncommitted changes into small commits, then walks you through each one in VS Code's own diff editor. Ask about any line, approve, commit.
 
-**[Website](https://msalmi.com/sift/)** · **[Install](https://marketplace.visualstudio.com/items?itemName=msalmi.git-sift)** · **[Releases](https://github.com/mathsalmi/sift/releases)**
+**[Website](https://sift.msalmi.com/)** · **[Install](https://marketplace.visualstudio.com/items?itemName=msalmi.git-sift)** · **[Releases](https://github.com/mathsalmi/sift/releases)**
 
 ## Features
 

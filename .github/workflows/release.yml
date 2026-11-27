@@ -41,15 +41,15 @@ jobs:
       - name: Build the .vsix
         run: |
           if [ "$PRE" = true ]; then
-            npm run package -- --pre-release --out "sift-${TAG#v}.vsix"
+            npm run package -- --pre-release --out "git-sift-${TAG#v}.vsix"
           else
-            npm run package -- --out "sift-${TAG#v}.vsix"
+            npm run package -- --out "git-sift-${TAG#v}.vsix"
           fi
 
       - name: Attach it to the release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "$TAG" "sift-${TAG#v}.vsix" --clobber
+        run: gh release upload "$TAG" "git-sift-${TAG#v}.vsix" --clobber
 
       - name: Publish to Open VSX
         env:
@@ -61,4 +61,4 @@ jobs:
           fi
           flags=""
           if [ "$PRE" = true ]; then flags="--pre-release"; fi
-          npx --yes ovsx publish "sift-${TAG#v}.vsix" -p "$OVSX_PAT" $flags
+          npx --yes ovsx publish "git-sift-${TAG#v}.vsix" -p "$OVSX_PAT" $flags

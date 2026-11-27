@@ -1,6 +1,6 @@
 {
-  "name": "sift",
-  "displayName": "Sift",
+  "name": "git-sift",
+  "displayName": "Git Sift",
   "description": "Plan a large change set into reviewed, atomic commits, and ask the AI of your choice about any line.",
   "publisher": "msalmi",
   "version": "1.0.0",

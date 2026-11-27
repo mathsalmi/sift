@@ -9,7 +9,7 @@
 
 Sift asks an AI to plan your uncommitted changes into small commits, then walks you through each one in VS Code's own diff editor. Ask about any line, approve, commit.
 
-**[Website](https://msalmi.com/sift/)** · **[Install](https://marketplace.visualstudio.com/items?itemName=msalmi.sift)** · **[Releases](https://github.com/mathsalmi/sift/releases)**
+**[Website](https://msalmi.com/sift/)** · **[Install](https://marketplace.visualstudio.com/items?itemName=msalmi.git-sift)** · **[Releases](https://github.com/mathsalmi/sift/releases)**
 
 ## Features
 
@@ -23,7 +23,7 @@ Sift asks an AI to plan your uncommitted changes into small commits, then walks 
 
 ## Install
 
-- **VS Code:** install [Sift from the Marketplace](https://marketplace.visualstudio.com/items?itemName=msalmi.sift).
+- **VS Code:** install [Git Sift from the Marketplace](https://marketplace.visualstudio.com/items?itemName=msalmi.git-sift).
 - **Cursor, Windsurf, VSCodium:** download the `.vsix` from the [latest release](https://github.com/mathsalmi/sift/releases/latest), then run **Extensions: Install from VSIX**.
 
 Needs VS Code 1.95+, Git, and an AI (optional: Sift also works for manual reviews).

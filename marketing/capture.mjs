@@ -249,6 +249,8 @@ async function expandAll() {
 /** Clicks a button in the Sift view's title bar. */
 async function titleButton(label) {
   await page.locator(`.part.sidebar .action-label[aria-label^="${label}"]`).first().click();
+  // Move away so the button's tooltip doesn't show in the screenshots.
+  await page.mouse.move(1000, 360);
   await pause();
 }
 

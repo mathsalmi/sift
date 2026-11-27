@@ -1,7 +1,4 @@
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="resources/logo/sift-paper.png">
-  <img src="resources/logo/sift-ink.png" width="96" alt="Sift">
-</picture>
+<img src="https://raw.githubusercontent.com/mathsalmi/sift/main/resources/logo/sift-paper.png" width="96" alt="Sift">
 
 # Sift
 

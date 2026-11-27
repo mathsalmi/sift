@@ -5,28 +5,37 @@ name: Release
 # The workflow builds the .vsix, attaches it to the release and publishes it:
 # - to the Marketplace when the AZURE_CLIENT_ID and AZURE_TENANT_ID variables are set. They name
 #   an Entra ID app that signs in from the `marketplace` environment and is a member of the publisher.
-# - to Open VSX when the OVSX_PAT secret is set.
-# Run it by hand to print the app's Marketplace user ID, which is what Members > Add asks for.
+# - to Open VSX: with the OVSX_PAT secret when it's set (it also creates the msalmi namespace),
+#   otherwise as the trusted publisher registered for this workflow on open-vsx.org.
+# Run it by hand with a tag to publish that release again (versions already published are skipped),
+# or without one to print the app's Marketplace user ID, which is what Members > Add asks for.
 
 on:
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to publish again, such as v1.0.2 (empty to only print the Marketplace ID)
+        required: false
 
 permissions:
   contents: write
 
 jobs:
   release:
-    if: github.event_name == 'release'
+    if: github.event_name == 'release' || inputs.tag != ''
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     env:
-      TAG: ${{ github.event.release.tag_name }}
-      PRE: ${{ github.event.release.prerelease }}
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.release.tag_name }}
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -36,6 +45,7 @@ jobs:
 
       - name: Check the tag matches package.json
         run: |
+          echo "PRE=$(gh release view "$TAG" --json isPrerelease -q .isPrerelease)" >> "$GITHUB_ENV"
           expected="v$(node -p "require('./package.json').version")"
           if [ "$TAG" != "$expected" ]; then
             echo "The release tag $TAG doesn't match $expected from package.json" >&2
@@ -51,21 +61,21 @@ jobs:
           fi
 
       - name: Attach it to the release
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: gh release upload "$TAG" "git-sift-${TAG#v}.vsix" --clobber
 
       - name: Publish to Open VSX
         env:
           OVSX_PAT: ${{ secrets.OVSX_PAT }}
         run: |
-          if [ -z "$OVSX_PAT" ]; then
-            echo "OVSX_PAT isn't set; skipping Open VSX."
-            exit 0
+          vsix="git-sift-${TAG#v}.vsix"
+          flags="--skip-duplicate"
+          if [ "$PRE" = true ]; then flags="$flags --pre-release"; fi
+          if [ -n "$OVSX_PAT" ]; then
+            npx --yes ovsx create-namespace msalmi -p "$OVSX_PAT" || true
+            npx --yes ovsx publish "$vsix" -p "$OVSX_PAT" $flags
+          else
+            npx --yes ovsx publish "$vsix" --trusted-publishing $flags
           fi
-          flags=""
-          if [ "$PRE" = true ]; then flags="--pre-release"; fi
-          npx --yes ovsx publish "git-sift-${TAG#v}.vsix" -p "$OVSX_PAT" $flags
 
   marketplace:
     needs: release
@@ -76,7 +86,7 @@ jobs:
       contents: read
       id-token: write
     env:
-      TAG: ${{ github.event.release.tag_name }}
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
     steps:
       - uses: azure/login@v2
         with:
@@ -91,9 +101,9 @@ jobs:
             --query authenticatedUser.id -o tsv
 
       - name: Publish to the Marketplace
-        if: github.event_name == 'release'
+        if: env.TAG != ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release download "$TAG" -R "$GITHUB_REPOSITORY" -p "git-sift-${TAG#v}.vsix"
-          npx --yes @vscode/vsce@3 publish --packagePath "git-sift-${TAG#v}.vsix" --azure-credential
+          npx --yes @vscode/vsce@3 publish --packagePath "git-sift-${TAG#v}.vsix" --azure-credential --skip-duplicate

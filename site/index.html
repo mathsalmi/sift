@@ -130,6 +130,8 @@
     footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
     footer a { color: var(--slate); text-decoration: none; margin-left: 20px; }
     footer a:first-child { margin-left: 0; }
+    footer a.author { margin-left: 0; color: var(--ink); text-decoration: underline; text-decoration-color: var(--sand); text-underline-offset: 3px; }
+    footer a.author:hover { text-decoration-color: var(--accent); }
 
     /* Lightbox */
     dialog { border: 0; padding: 0; background: transparent; max-width: 96vw; max-height: 94vh; }
@@ -347,7 +349,7 @@
 
   <footer>
     <div class="wrap">
-      <span>Sift by Matheus Salmi</span>
+      <span>Sift by <a class="author" href="https://msalmi.com">Matheus Salmi</a></span>
       <span>
         <a href="https://github.com/mathsalmi/sift#readme">Docs</a>
         <a href="https://github.com/mathsalmi/sift/releases">Releases</a>
